@@ -1,0 +1,9 @@
+node_modules/
+.wrangler/
+.dev.vars
+dist/
+*.log
+publisher/config.json
+posts.json
+cookies.txt
+.spec-workflow/

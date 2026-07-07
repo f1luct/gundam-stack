@@ -1,0 +1,19 @@
+{
+  "name": "gundam-stack",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:local": "wrangler d1 execute gundam-stack --local --file=./schema.sql",
+    "db:remote": "wrangler d1 execute gundam-stack --remote --file=./schema.sql"
+  },
+  "dependencies": {
+    "hono": "^4.6.14"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250109.0",
+    "wrangler": "^4.102.0"
+  }
+}

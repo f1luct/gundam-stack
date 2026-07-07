@@ -1,0 +1,7 @@
+{
+  "port": 8790,
+  "pubToken": "<64位随机hex,与 Worker secret PUB_TOKEN 同值>",
+  "opencliDir": "C:/Users/<用户>/AppData/Roaming/npm/node_modules/@jackwener/opencli",
+  "weiboUid": "<微博数字uid>",
+  "workerUrl": "https://gundam.fluct.dev"
+}
