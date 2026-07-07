@@ -316,6 +316,36 @@ async function loadCards() {
   }
 }
 
+// 发布跟踪:点发布后每 6s 查一次该卡,发出/失败自动提示并刷新(最多跟 3 分钟)。
+// 刷新页面后对仍在"发布中"的卡会自动续上(cardEl 里重新挂)。
+const watching = new Set();
+function watchPosted(id) {
+  if (watching.has(id)) return;
+  watching.add(id);
+  let tries = 0;
+  const timer = setInterval(async () => {
+    if (++tries > 30) { watching.delete(id); clearInterval(timer); return; }
+    let card;
+    try {
+      card = (await api('/api/cards/' + id)).card;
+    } catch (err) {
+      if (err.message === 'unauthorized') { watching.delete(id); clearInterval(timer); }
+      return; // 网络抖动，下一轮再查
+    }
+    if (card.status === 'posted') {
+      watching.delete(id);
+      clearInterval(timer);
+      toast('已发布到微博 ✓');
+      await loadCards();
+    } else if (card.status === 'queued' && !card.scheduled_at) {
+      watching.delete(id);
+      clearInterval(timer);
+      toast('发布失败，已退回待发', true);
+      await loadCards();
+    }
+  }, 6000);
+}
+
 function renderCards() {
   const box = document.getElementById('cards');
   box.innerHTML = '';
@@ -365,10 +395,14 @@ function cardEl(card) {
     )
     .join('');
 
-  const schedBadge =
-    card.status === 'queued' && card.scheduled_at
+  // 定时时间已到=正在被 N150 处理，显示发布中并挂上跟踪
+  const publishing = card.status === 'queued' && card.scheduled_at && card.scheduled_at <= Date.now() + 65000;
+  const schedBadge = publishing
+    ? '<span class="sched-badge">⏳ 发布中…</span>'
+    : card.status === 'queued' && card.scheduled_at
       ? `<span class="sched-badge">⏰ ${fmtSched(card.scheduled_at)} 定时</span>`
       : '';
+  if (publishing) watchPosted(card.id);
 
   root.dataset.scheduled = card.status === 'queued' && card.scheduled_at ? '1' : '';
   root.innerHTML = `
@@ -497,7 +531,8 @@ function cardEl(card) {
           method: 'PATCH',
           body: JSON.stringify({ scheduled_at: Date.now() }),
         });
-        toast('已加入发布队列，约 1 分钟内发出 ✓（可关页面）');
+        toast('发布中…发出后会自动提示 ✓（关页面也照发）');
+        watchPosted(card.id);
         await loadCards();
       } catch (err) {
         if (err.message !== 'unauthorized') toast(err.message, true);

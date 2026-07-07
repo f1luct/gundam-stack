@@ -146,13 +146,16 @@ async function doPublish({ caption, images, token }) {
   if (!OPENCLI_JS) throw new Error('N150 上还没装好 opencli(或没重启发布服务)');
   const dir = fs.mkdtempSync(path.join(TMP_ROOT, 'pub-'));
   try {
-    // 预检防重复:同一张卡被排队两次(用户连点/重试)时,第二次发现时间线上
-    // 已有该条就直接算成功,绝不重复发出去
-    if (await checkPostedOnce(caption)) {
+    // 预检(防重复发)和下载图片互不依赖,并行跑省 5-10s
+    const [dup, files] = await Promise.all([
+      checkPostedOnce(caption),
+      images && images.length ? downloadImages(images, token, dir) : Promise.resolve([]),
+    ]);
+    // 同一张卡被排队两次(用户连点/重试)时,时间线上已有该条就直接算成功,绝不重复发
+    if (dup) {
       console.log('[publisher] 预检:时间线已有该条,跳过重复发布');
       return '时间线已存在,跳过';
     }
-    const files = images && images.length ? await downloadImages(images, token, dir) : [];
     // ephemeral:每次开全新标签页,避免复用标签页的残留状态
     const args = ['weibo', 'publish', caption || '', '--site-session', 'ephemeral'];
     if (files.length) args.push('--images', files.join(','));
@@ -187,6 +190,12 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET' && req.url === '/health') {
     return send(200, { ok: true, opencli: !!OPENCLI_JS });
+  }
+  // Worker 设了"立即发"后踢一脚:马上跑一轮定时检查,不等 60s 轮询
+  if (req.method === 'POST' && req.url === '/kick') {
+    if (!tokenOk(req.headers.authorization)) return send(401, { error: 'bad token' });
+    pollScheduled().catch(() => {});
+    return send(200, { ok: true });
   }
   if (req.method !== 'POST' || req.url !== '/publish') return send(404, { error: 'not found' });
   if (!tokenOk(req.headers.authorization)) return send(401, { error: 'bad token' });

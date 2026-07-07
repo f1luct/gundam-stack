@@ -46,9 +46,10 @@ function pubTokenOk(c: any): boolean {
 app.get('/api/scheduled/due', async (c) => {
   if (!pubTokenOk(c)) return c.json({ error: '未授权' }, 401);
   const now = Date.now();
-  // 一次只放 1 条：微博对连发有风控，让定时发送之间至少隔一个轮询周期(60s)
+  // 一次最多 3 条：N150 是串行队列,每条发完(~40-60s)才发下一条,连发间隔天然拉开;
+  // 放 3 条是为了手动连发多张时一次 kick 全部带走,不用各等一轮轮询
   const rows = await c.env.DB.prepare(
-    "SELECT id FROM cards WHERE status = 'queued' AND scheduled_at IS NOT NULL AND scheduled_at <= ? ORDER BY scheduled_at ASC LIMIT 1",
+    "SELECT id FROM cards WHERE status = 'queued' AND scheduled_at IS NOT NULL AND scheduled_at <= ? ORDER BY scheduled_at ASC LIMIT 3",
   )
     .bind(now)
     .all();
@@ -228,6 +229,20 @@ app.patch('/api/cards/:id', async (c) => {
   await c.env.DB.prepare(`UPDATE cards SET ${fields.join(', ')} WHERE id = ?`)
     .bind(...vals)
     .run();
+  // 设了"立即发"(手动发布按钮)就踢一脚 N150 马上来取,不等它 60s 轮询
+  if (
+    typeof body.scheduled_at === 'number' &&
+    body.scheduled_at <= Date.now() + 5000 &&
+    c.env.PUB_URL &&
+    c.env.PUB_TOKEN
+  ) {
+    c.executionCtx.waitUntil(
+      fetch(c.env.PUB_URL.replace(/\/+$/, '') + '/kick', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${c.env.PUB_TOKEN}` },
+      }).then(() => {}).catch(() => {}), // 踢不动也无妨,轮询兜底
+    );
+  }
   const card = await getCardWithImages(c.env, id);
   if (!card) return c.json({ error: '卡片不存在' }, 404);
   return c.json({ card });
