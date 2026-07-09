@@ -3,7 +3,7 @@
 const $app = document.getElementById('app');
 const $toast = document.getElementById('toast');
 
-let state = { tab: 'inbox', cards: [], counts: { inbox: 0, queued: 0, posted: 0 } };
+let state = { tab: 'inbox', src: 'all', cards: [], counts: { inbox: 0, queued: 0, posted: 0 } };
 let toastTimer = null;
 
 /* ---------------- 工具 ---------------- */
@@ -208,6 +208,7 @@ function renderShell() {
           <button class="btn-news" id="newsBtn" title="抓取 gundam-official.com 最新新闻，AI 生成中文快讯">官方新闻</button>
         </div>
         <nav class="states" id="tabs"></nav>
+        <div class="srcbar" id="srcbar"></div>
       </div>
     </header>
     <main class="deck"><div class="cards" id="cards"></div></main>`;
@@ -310,10 +311,59 @@ async function loadCards() {
     state.cards = list.cards;
     state.counts = count.counts;
     renderTabs();
+    renderSrcBar();
     renderCards();
   } catch (err) {
     if (err.message !== 'unauthorized') toast(err.message, true);
   }
+}
+
+// 来源筛选条:全部 / X / 新闻;当前标签下按来源过滤,新闻筛选时提供一键清空草稿
+function renderSrcBar() {
+  const el = document.getElementById('srcbar');
+  const news = state.cards.filter((c) => c.source_type === 'news').length;
+  const chips = [
+    { key: 'all', label: '全部', n: state.cards.length },
+    { key: 'x', label: 'X', n: state.cards.length - news },
+    { key: 'news', label: '新闻', n: news },
+  ]
+    .map(
+      (f) =>
+        `<button class="chip ${state.src === f.key ? 'active' : ''}" data-src="${f.key}">${f.label}<b>${f.n}</b></button>`,
+    )
+    .join('');
+  const clearBtn =
+    state.tab === 'inbox' && state.src === 'news' && news
+      ? '<button class="chip chip-danger" id="clearNews">✕ 清空新闻草稿</button>'
+      : '';
+  el.innerHTML = chips + clearBtn;
+  el.querySelectorAll('[data-src]').forEach((b) =>
+    b.addEventListener('click', () => {
+      state.src = b.dataset.src;
+      renderSrcBar();
+      renderCards();
+    }),
+  );
+  const clr = document.getElementById('clearNews');
+  if (clr)
+    clr.addEventListener('click', async () => {
+      if (!confirm(`清空全部 ${news} 条新闻草稿？\n清掉的新闻不会被重新拉取。`)) return;
+      clr.disabled = true;
+      clr.textContent = '清空中…';
+      try {
+        // 服务端每轮最多删 5 张（子请求预算），循环到删完
+        let removed = 0;
+        for (let i = 0; i < 12; i++) {
+          const r = await api('/api/news/clear', { method: 'POST' });
+          removed += r.removed;
+          if (!r.remaining) break;
+        }
+        toast(`已清空 ${removed} 条新闻草稿`);
+      } catch (err) {
+        if (err.message !== 'unauthorized') toast(err.message, true);
+      }
+      await loadCards();
+    });
 }
 
 // 发布跟踪:点发布后每 6s 查一次该卡,发出/失败自动提示并刷新(最多跟 3 分钟)。
@@ -349,11 +399,17 @@ function watchPosted(id) {
 function renderCards() {
   const box = document.getElementById('cards');
   box.innerHTML = '';
-  if (!state.cards.length) {
-    box.innerHTML = `<div class="empty">${EMPTY[state.tab] || '<b>无内容</b>'}</div>`;
+  const shown =
+    state.src === 'all'
+      ? state.cards
+      : state.cards.filter((c) => (state.src === 'news') === (c.source_type === 'news'));
+  if (!shown.length) {
+    box.innerHTML = `<div class="empty">${
+      state.cards.length ? '<b>该来源下无内容</b>切换上面的筛选看看' : EMPTY[state.tab] || '<b>无内容</b>'
+    }</div>`;
     return;
   }
-  for (const card of state.cards) box.appendChild(cardEl(card));
+  for (const card of shown) box.appendChild(cardEl(card));
   // 入 DOM 后才有 scrollHeight，统一把配文框撑到和内容等高
   box.querySelectorAll('textarea').forEach(autosize);
 }

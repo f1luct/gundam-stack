@@ -473,6 +473,42 @@ select {
 .state.active .state-cn { color: var(--state-active-ink); }
 .state.active .state-count { color: var(--ink); }
 
+/* ---------- 来源筛选条 ---------- */
+
+.srcbar {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--steel);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+.chip b { font-weight: 600; color: var(--steel-2); }
+.chip:hover { background: var(--panel-2); }
+.chip.active {
+  background: var(--raise);
+  color: var(--ink);
+  border-color: var(--state-active-line);
+}
+.chip.active b { color: var(--ink); }
+.chip-danger {
+  margin-left: auto;
+  color: var(--red);
+  border-color: var(--red);
+}
+.chip-danger:hover { background: var(--red); color: #fff; }
+
 /* ---------- 卡片甲板 ---------- */
 
 .deck {

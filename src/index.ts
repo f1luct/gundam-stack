@@ -149,6 +149,20 @@ app.post('/api/news/auto', async (c) => {
   }
 });
 
+// 一键清空新闻草稿：每次最多删 5 张（免费版子请求预算），前端循环调到 remaining=0。
+// 只删卡片，news_seen 见过表保留 → 清掉的新闻永远不会被重新拉进来
+app.post('/api/news/clear', async (c) => {
+  const rows = await c.env.DB.prepare(
+    "SELECT id FROM cards WHERE source_type = 'news' AND status = 'inbox' ORDER BY created_at ASC LIMIT 5",
+  ).all();
+  const ids = (rows.results || []).map((r: any) => r.id as string);
+  for (const id of ids) await deleteCard(c.env, id);
+  const left = await c.env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM cards WHERE source_type = 'news' AND status = 'inbox'",
+  ).first<{ n: number }>();
+  return c.json({ removed: ids.length, remaining: Number(left?.n ?? 0) });
+});
+
 // 手动创建卡片（非 Twitter 内容的兜底）
 app.post('/api/cards', async (c) => {
   const body = await c.req.json<any>().catch(() => ({}));
