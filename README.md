@@ -4,6 +4,8 @@
 
 线上跑在 Cloudflare 免费额度里,发布靠一台常开的 N150 小主机。
 
+![界面截图](docs/screenshot.png)
+
 ```
 浏览器 ── Cloudflare Worker (Hono + D1 + R2)
               │  ↑ 60s 轮询定时任务 / kick 即时触发
