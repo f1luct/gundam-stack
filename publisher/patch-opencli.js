@@ -1,10 +1,14 @@
-// opencli weibo publish 最小补丁(v4)。
-// 病根(用诊断确认):微博发布页有两个编辑器——顶栏内联条 和 弹层。原版把图片喂给
-// 第一个 _file_ 输入(在顶栏条),却把文案用 nativeSetter 写进弹层 textarea。微博从
-// "有图的顶栏条"提交 → 文案丢失,发出去变"分享图片"。
-// 修法:只改文案定位——把文案写进「图片所在的那个编辑器」(第一个 _file_ 输入向上找到
-// 的容器里的 textarea),并用 execCommand 触发真实输入让 Vue 感知。图片上传、发送按钮、
-// 成功检测全部保持原版不动。
+// opencli weibo publish 补丁(v6)。两处修改:
+//
+// ① 文案定位(v4 起):微博发布页有两个编辑器(顶栏内联条 + 弹层),原版把图片喂给第一个
+//    _file_ 输入(顶栏条),文案却写进"最后一个可见 textarea"(弹层)→ 发出去变"分享图片"。
+//    修法:文案写进「图片所在的编辑器」,execCommand 触发真实输入让 Vue 感知。
+//
+// ② 发送与结果判定(v6 起,整段替换原版 Step 7/8):原版上传完成检测是全局数图片
+//    (信息流里全是图,恒真),大图还在上传就点了发送,点击无效且无报错 → "result unclear"。
+//    新逻辑见 patch-step78.snippet.js:发送按钮限定编辑器内、「输入框清空」为提交信号、
+//    落空自动重点、90s 窗口。
+//
 // publisher.js 启动会自动 applyPatch() 自愈;npm 更新 opencli 后重启服务即恢复。
 'use strict';
 const fs = require('node:fs');
@@ -13,7 +17,7 @@ const path = require('node:path');
 function applyPatch(dir) {
   const file = path.join(dir, 'clis', 'weibo', 'publish.js');
   const bak = file + '.bak';
-  const MARK = 'gundam-patch v5';
+  const MARK = 'gundam-patch v6';
 
   const current = fs.readFileSync(file, 'utf8');
   if (current.includes(MARK)) return 'skip';
@@ -26,8 +30,9 @@ function applyPatch(dir) {
   }
   let src = fs.readFileSync(file, 'utf8');
 
-  // 原版文案插入 IIFE 主体(nativeSetter 写进"最后一个可见 textarea"=弹层)
-  const OLD =
+  /* ---------- ① 文案写进图片所在编辑器 ---------- */
+
+  const OLD_INSERT =
     "                if (!ta) return { ok: false, message: 'textarea not visible' };\n" +
     "                ta.focus();\n" +
     "                const nativeSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;\n" +
@@ -40,8 +45,8 @@ function applyPatch(dir) {
     "                ta.dispatchEvent(new Event('change', { bubbles: true }));\n" +
     "                return { ok: true, valueLength: ta.value.length };";
 
-  const NEW =
-    "                /* gundam-patch v5: 文案写进「图片所在的编辑器」，并用真实输入触发 Vue */\n" +
+  const NEW_INSERT =
+    "                /* gundam-patch v6: 文案写进「图片所在的编辑器」，并用真实输入触发 Vue */\n" +
     "                const fileInput = document.querySelector('input[type=\"file\"][class*=\"_file_\"]');\n" +
     "                let target = null;\n" +
     "                if (fileInput) {\n" +
@@ -67,21 +72,22 @@ function applyPatch(dir) {
     "                }\n" +
     "                return { ok: true, valueLength: target.value.length };";
 
-  if (!src.includes(OLD)) {
-    throw new Error('文案插入锚点没找到 —— opencli 版本变了，补丁需重新适配');
+  if (!src.includes(OLD_INSERT)) {
+    throw new Error('文案插入锚点没找到 —— opencli 版本变了,补丁需重新适配');
   }
-  src = src.replace(OLD, NEW);
+  src = src.replace(OLD_INSERT, NEW_INSERT);
 
-  // 发送前多等几秒:图片上传 + 微博"辅助创作"AI 推荐面板出现会改布局，
-  // 原版只等 0.5s 就点发送，面板一插进来点击就落空 → "result unclear"。
-  const OLD_WAIT = '        await page.wait({ time: 0.5 });\n        const publishResult = await page.evaluate(';
-  const NEW_WAIT = '        await page.wait({ time: 3 }); /* gundam-patch v5: 等上传+AI面板稳定 */\n        const publishResult = await page.evaluate(';
-  if (src.includes(OLD_WAIT)) src = src.replace(OLD_WAIT, NEW_WAIT);
+  /* ---------- ② 整段替换 Step 7/8(点发送 + 判结果) ---------- */
 
-  // 成功检测窗口放宽(带图提交+服务端处理有时超过 20s)
-  if (src.includes('const SUBMIT_TIMEOUT_MS = 20_000;')) {
-    src = src.replace('const SUBMIT_TIMEOUT_MS = 20_000;', 'const SUBMIT_TIMEOUT_MS = 35_000;');
+  const STEP7_START = '        // Step 7: Click the send button inside the compose editor';
+  const STEP8_END = '        if (!finalResult) {';
+  const i7 = src.indexOf(STEP7_START);
+  const i8 = src.indexOf(STEP8_END);
+  if (i7 < 0 || i8 <= i7) {
+    throw new Error('Step7/8 锚点没找到 —— opencli 版本变了,补丁需重新适配');
   }
+  const snippet = fs.readFileSync(path.join(__dirname, 'patch-step78.snippet.js'), 'utf8');
+  src = src.slice(0, i7) + snippet + src.slice(i8);
 
   fs.writeFileSync(file, src);
   return 'patched';
@@ -93,5 +99,5 @@ if (require.main === module) {
   const dir = process.argv[2];
   if (!dir) throw new Error('用法: node patch-opencli.js <opencli目录>');
   const r = applyPatch(dir);
-  console.log(r === 'skip' ? '已含补丁,跳过' : '补丁 v4 完成(文案定位到图片编辑器),备份 publish.js.bak');
+  console.log(r === 'skip' ? '已含补丁,跳过' : '补丁 v6 完成,备份 publish.js.bak');
 }
