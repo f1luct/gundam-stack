@@ -106,6 +106,19 @@ function runOpencli(args) {
   });
 }
 
+// Chrome 152+ 偶发 "Navigation rejected."(扩展刚 detach 调试器就跳转被拒,opencli issue #2487)。
+// 这个错发生在第一步打开页面时,还没填文案/点发送,重跑是安全的
+async function runOpencliRetry(args) {
+  let r;
+  for (let i = 0; i < 3; i++) {
+    r = await runOpencli(args);
+    if (r.code === 0 || !/Navigation rejected/i.test(r.out)) return r;
+    console.log(`[publisher] Navigation rejected,${2 * (i + 1)}s 后重试 (${i + 1}/3)`);
+    await new Promise((res) => setTimeout(res, 2000 * (i + 1)));
+  }
+  return r;
+}
+
 /* ---------- 发布队列:一次只跑一个,避免两次自动化在 Chrome 里打架 ---------- */
 
 let chain = Promise.resolve();
@@ -118,7 +131,7 @@ function enqueue(job) {
 // 最近几条里有没有这次要发的(按前若干字比对，忽略空白/零宽字符；查多条防并发错位)
 async function checkPostedOnce(caption) {
   if (!CFG.weiboUid) return false;
-  const { code, out } = await runOpencli([
+  const { code, out } = await runOpencliRetry([
     'weibo', 'user-posts', String(CFG.weiboUid), '--limit', '5', '-f', 'json',
   ]);
   if (code !== 0) return false;
@@ -160,7 +173,7 @@ async function doPublish({ caption, images, token }) {
     const args = ['weibo', 'publish', caption || '', '--site-session', 'ephemeral'];
     if (files.length) args.push('--images', files.join(','));
     console.log(`[publisher] 发布中: ${files.length} 图, 文案 ${caption.length} 字`);
-    const { code, out } = await runOpencli(args);
+    const { code, out } = await runOpencliRetry(args);
 
     // opencli 靠页面抓字判断成功/失败,既会漏判("结果不明")也会误判(把"创作者中心"
     // 侧栏的"发送失败"标签当成结果)。改用地面真相:发完查时间线,出现了就是成功。
