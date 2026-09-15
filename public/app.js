@@ -79,6 +79,26 @@ function fmtSched(ms) {
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+/* 定时间隔(小时)：记住上次用的，默认 1 */
+function getGapHours() {
+  let v = 1;
+  try { v = Number(localStorage.getItem('gs_gap')) || 1; } catch (e) { /* 隐私模式忽略 */ }
+  return v > 0 ? v : 1;
+}
+function setGapHours(v) {
+  try { localStorage.setItem('gs_gap', String(v)); } catch (e) { /* 隐私模式忽略 */ }
+}
+/* 接在队列最后一条定时之后 +gap 小时；队列里没有定时就从现在算。excludeId=当前卡自己 */
+function nextSlot(excludeId, gapHours) {
+  let base = Date.now();
+  for (const c of state.cards) {
+    if (c.id !== excludeId && c.status === 'queued' && c.scheduled_at && c.scheduled_at > base) {
+      base = c.scheduled_at;
+    }
+  }
+  return base + gapHours * 3600000;
+}
+
 /* ---------------- 剪贴板 ---------------- */
 
 async function pngFrom(url) {
@@ -606,11 +626,8 @@ function cardEl(card) {
     input.className = 'sched-input';
     const now = new Date();
     input.min = toLocalInput(now.getTime());
-    input.value = toLocalInput(card.scheduled_at || now.getTime() + 3600000);
-    const setSched = async () => {
-      const val = input.value;
-      if (!val) return;
-      const ms = new Date(val).getTime();
+    input.value = toLocalInput(card.scheduled_at || nextSlot(card.id, getGapHours()));
+    const schedAt = async (ms) => {
       if (!ms || ms < Date.now()) { toast('请选择一个未来的时间', true); return; }
       try {
         await save();
@@ -624,6 +641,31 @@ function cardEl(card) {
         if (err.message !== 'unauthorized') toast(err.message, true);
       }
     };
+    const setSched = () => {
+      if (!input.value) return;
+      return schedAt(new Date(input.value).getTime());
+    };
+    // 快捷排队：接在队列最后一条定时后面 +N 小时
+    const gap = document.createElement('input');
+    gap.type = 'number';
+    gap.className = 'sched-input sched-gap';
+    gap.min = '0.5';
+    gap.step = '0.5';
+    gap.value = String(getGapHours());
+    gap.title = '间隔小时数';
+    gap.addEventListener('change', () => {
+      const v = Number(gap.value);
+      if (v > 0) {
+        setGapHours(v);
+        if (!card.scheduled_at) input.value = toLocalInput(nextSlot(card.id, v));
+      }
+    });
+    const queueGap = () => {
+      const v = Number(gap.value);
+      if (!(v > 0)) { toast('间隔要大于 0', true); return; }
+      setGapHours(v);
+      return schedAt(nextSlot(card.id, v));
+    };
     const clearSched = async () => {
       try {
         await api('/api/cards/' + card.id, {
@@ -636,6 +678,16 @@ function cardEl(card) {
         if (err.message !== 'unauthorized') toast(err.message, true);
       }
     };
+    const gapLabel = document.createElement('span');
+    gapLabel.className = 'sched-label';
+    gapLabel.textContent = '接上一条 +';
+    const gapUnit = document.createElement('span');
+    gapUnit.className = 'sched-label';
+    gapUnit.textContent = '小时';
+    sched.appendChild(gapLabel);
+    sched.appendChild(gap);
+    sched.appendChild(gapUnit);
+    sched.appendChild(mkBtn('排队', 'btn-ghost', queueGap));
     sched.appendChild(input);
     sched.appendChild(mkBtn(card.scheduled_at ? '改定时' : '定时', 'btn-ghost', setSched));
     if (card.scheduled_at) sched.appendChild(mkBtn('取消定时', 'btn-ghost', clearSched));

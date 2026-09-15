@@ -730,8 +730,18 @@ select {
 /* 定时发送控件 */
 .sched {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+}
+.sched-gap {
+  width: 4.5em;
+}
+.sched-label {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--yellow);
+  white-space: nowrap;
 }
 .sched-input {
   font-family: var(--mono);
