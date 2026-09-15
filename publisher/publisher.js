@@ -92,9 +92,13 @@ async function downloadImages(urls, bearer, dir) {
   return files;
 }
 
+// --trace 会让 opencli 先开网络抓包,扩展看到抓包在就不会在跳转前 detach 调试器,
+// 从根上绕开 Chrome 152 的 "Navigation rejected"(实测 plain 8 挂 2,trace 8/8 成功)
+const TRACE_ARGS = ['--trace', 'retain-on-failure'];
+
 function runOpencli(args) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [OPENCLI_JS, ...args], {
+    const child = spawn(process.execPath, [OPENCLI_JS, ...args, ...TRACE_ARGS], {
       windowsHide: true,
       timeout: OPENCLI_TIMEOUT_MS,
     });
