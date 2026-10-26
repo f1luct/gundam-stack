@@ -458,6 +458,19 @@ function cardEl(card) {
     ? `<div class="unit-title">${esc(meta.title)}</div>`
     : '';
 
+  // 自动找帖的卡片：来源 + 看图红牌（AI / 国内画师只提示不拦，留给人判断）
+  const autoTags = meta.auto
+    ? `<span class="auto-tag">AUTO · ${esc(meta.via === 'list' ? '关注列表' : meta.via || '')}</span>` +
+      (meta.ai_suspect ? '<span class="flag">疑似AI</span>' : '') +
+      (meta.cn_artist_suspect ? '<span class="flag">疑似国内作者</span>' : '')
+    : '';
+  const flagReason = meta.auto && meta.reason && (meta.ai_suspect || meta.cn_artist_suspect)
+    ? `<div class="unit-title flag-reason">${esc(meta.reason)}</div>`
+    : '';
+  // 简洁文案 ⇄ 附上原文（有中文译文用译文，否则用原文）
+  const shortHead = [meta.subject, meta.work && '《' + meta.work.replace(/^《|》$/g, '') + '》'].filter(Boolean).join(' ');
+  const extraText = (meta.text_zh || card.text_original || '').trim();
+
   const shots = (card.images || [])
     .map(
       (im) => `
@@ -486,12 +499,14 @@ function cardEl(card) {
     <header class="unit-head">
       <span class="tag">${esc(srcBadge)}</span>
       ${handle}
+      ${autoTags}
       <span class="flex"></span>
       ${schedBadge}
       <span class="unit-code">${esc(code)}</span>
       <span class="unit-time">${fmtTime(card.created_at)}</span>
     </header>
     ${newsTitle}
+    ${flagReason}
     ${shots ? `<div class="visual"><div class="shots">${shots}</div></div>` : ''}
     <div class="body">
       <div class="body-label">CAPTION · 配文</div>
@@ -499,6 +514,7 @@ function cardEl(card) {
       <div class="tools">
         <button class="btn-copy" data-act="copytext">复制文案</button>
         <button class="btn-ghost" data-act="translate">翻译</button>
+        ${meta.auto && extraText ? '<button class="btn-ghost" data-act="withtext">附原文</button>' : ''}
         <select data-style>
           <option value="意译">意译 PARAPHRASE</option>
           <option value="直译">直译 LITERAL</option>
@@ -540,6 +556,21 @@ function cardEl(card) {
       try { downloadBlob(await pngFrom(b.dataset.dlimg), 'image.png'); }
       catch (e) { toast('失败：' + e.message, true); }
     }));
+
+  const withBtn = root.querySelector('[data-act="withtext"]');
+  if (withBtn) {
+    const sync = () => (withBtn.textContent = ta.value.includes(extraText) ? '去掉原文' : '附原文');
+    sync();
+    ta.addEventListener('input', sync);
+    withBtn.addEventListener('click', () => {
+      const body = ta.value.includes(extraText) ? shortHead : [shortHead, extraText].filter(Boolean).join('\n\n');
+      ta.value = composeCaption(body, card.author_handle);
+      autosize(ta);
+      dirty = true;
+      sync();
+      save();
+    });
+  }
 
   root.querySelector('[data-act="copytext"]').addEventListener('click', () => copyText(ta.value));
   root.querySelector('[data-act="translate"]').addEventListener('click', async (e) => {

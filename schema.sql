@@ -50,3 +50,11 @@ CREATE TABLE IF NOT EXISTS news_seen (
 INSERT OR IGNORE INTO news_seen (source_id, seen_at)
   SELECT source_id, created_at FROM cards
   WHERE source_type = 'news' AND source_id IS NOT NULL;
+
+-- 自动找帖"见过表"：N150 送来的候选无论进没进草稿都记一笔，
+-- 被看图拒掉的（水印/非高达）和删掉的卡片都不会再被送进来
+CREATE TABLE IF NOT EXISTS x_seen (
+  source_id TEXT PRIMARY KEY,
+  verdict   TEXT NOT NULL,                 -- carded | watermark | not_gundam | no_image
+  seen_at   INTEGER NOT NULL
+);

@@ -197,6 +197,10 @@ async function doPublish({ caption, images, token }) {
   }
 }
 
+/* ---------- 自动找帖(config.discover 配了才开) ---------- */
+
+const discover = require('./discover.js').startDiscover({ CFG, runOpencliRetry, enqueue });
+
 /* ---------- HTTP ---------- */
 
 const server = http.createServer((req, res) => {
@@ -213,6 +217,14 @@ const server = http.createServer((req, res) => {
     if (!tokenOk(req.headers.authorization)) return send(401, { error: 'bad token' });
     pollScheduled().catch(() => {});
     return send(200, { ok: true });
+  }
+  // 手动跑一轮自动找帖(调试用),跑完返回统计
+  if (req.method === 'POST' && req.url === '/discover') {
+    if (!tokenOk(req.headers.authorization)) return send(401, { error: 'bad token' });
+    discover.runOnce()
+      .then((summary) => send(200, { ok: true, summary }))
+      .catch((e) => send(500, { error: e.message }));
+    return;
   }
   if (req.method !== 'POST' || req.url !== '/publish') return send(404, { error: 'not found' });
   if (!tokenOk(req.headers.authorization)) return send(401, { error: 'bad token' });
