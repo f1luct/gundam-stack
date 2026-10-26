@@ -197,10 +197,6 @@ async function doPublish({ caption, images, token }) {
   }
 }
 
-/* ---------- 自动找帖(config.discover 配了才开) ---------- */
-
-const discover = require('./discover.js').startDiscover({ CFG, runOpencliRetry, enqueue });
-
 /* ---------- HTTP ---------- */
 
 const server = http.createServer((req, res) => {
@@ -217,14 +213,6 @@ const server = http.createServer((req, res) => {
     if (!tokenOk(req.headers.authorization)) return send(401, { error: 'bad token' });
     pollScheduled().catch(() => {});
     return send(200, { ok: true });
-  }
-  // 手动跑一轮自动找帖(调试用),跑完返回统计
-  if (req.method === 'POST' && req.url === '/discover') {
-    if (!tokenOk(req.headers.authorization)) return send(401, { error: 'bad token' });
-    discover.runOnce()
-      .then((summary) => send(200, { ok: true, summary }))
-      .catch((e) => send(500, { error: e.message }));
-    return;
   }
   if (req.method !== 'POST' || req.url !== '/publish') return send(404, { error: 'not found' });
   if (!tokenOk(req.headers.authorization)) return send(401, { error: 'bad token' });
@@ -292,7 +280,28 @@ async function pollScheduled() {
   }
 }
 
+/* ---------- 自动找帖心跳:找帖和看图都在 Worker 里,这里只负责定时敲一下 ----------
+   (Worker 的 Cron 开不了才需要这个;discoverEveryMin 设 0 关闭) */
+
+const DISCOVER_EVERY_MS = (CFG.discoverEveryMin ?? 5) * 60 * 1000;
+
+async function tickDiscover() {
+  const base = (CFG.workerUrl || '').replace(/\/+$/, '');
+  try {
+    const r = await fetch(base + '/api/discover/tick', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${CFG.pubToken}` },
+    });
+    const j = await r.json().catch(() => ({}));
+    const done = (j.processed || []).map((p) => p.verdict || 'error').join(',');
+    if (done || j.gathered?.error) console.log('[discover]', JSON.stringify(j));
+  } catch {
+    /* 下一轮再说 */
+  }
+}
+
 if (CFG.workerUrl) {
+  if (DISCOVER_EVERY_MS > 0) setInterval(() => tickDiscover(), DISCOVER_EVERY_MS);
   setInterval(() => pollScheduled().catch(() => {}), SCHED_POLL_MS);
   console.log('[publisher] 定时轮询已启动，每 60s 检查一次');
 } else {

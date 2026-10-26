@@ -5,8 +5,7 @@ import { authMiddleware, makeToken, checkPassword, COOKIE_NAME } from './auth';
 import { ingestTweet } from './ingest';
 import { pullNews } from './news';
 import { translate } from './translate';
-import { reviewTweet, shortBody } from './vision';
-import { parseTweetId } from './twitter';
+import { discoverTick } from './discover';
 import { attachImages, getCardWithImages, composeCaption, deleteCard } from './db';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -93,69 +92,10 @@ app.post('/api/scheduled/:id/failed', async (c) => {
   return c.json({ ok: true });
 });
 
-// N150 自动找帖：一次送一条候选（免费版子请求预算：看图 4 + 模型 1 + 抓取/存图 ~6）。
-// 先看图再入库，被拒的不落 R2；无论结论如何都记进 x_seen，下轮不再送
-app.post('/api/discover/candidate', async (c) => {
+// 自动找帖：N150 每几分钟敲一下（Cron 能开的话也会调），每次只走一小步，见 discover.ts
+app.post('/api/discover/tick', async (c) => {
   if (!pubTokenOk(c)) return c.json({ error: '未授权' }, 401);
-  const b = await c.req.json<any>().catch(() => ({}));
-  const id = parseTweetId(String(b.id || b.url || ''));
-  if (!id) return c.json({ error: '缺少推文 id' }, 400);
-  const seen = await c.env.DB.prepare(
-    `SELECT 1 FROM x_seen WHERE source_id = ?1
-     UNION SELECT 1 FROM cards WHERE source_type = 'twitter' AND source_id = ?1`,
-  )
-    .bind(id)
-    .first();
-  if (seen) return c.json({ result: 'seen' });
-
-  const markSeen = (verdict: string) =>
-    c.env.DB.prepare('INSERT OR REPLACE INTO x_seen (source_id, verdict, seen_at) VALUES (?, ?, ?)')
-      .bind(id, verdict, Date.now())
-      .run();
-  const imageUrls: string[] = (b.media_urls || []).filter((u: string) => /pbs\.twimg\.com\/media\//.test(u));
-  if (!imageUrls.length) {
-    await markSeen('no_image');
-    return c.json({ result: 'no_image' });
-  }
-
-  let rv;
-  try {
-    rv = await reviewTweet(c.env, { author: b.author || '', bio: b.bio, text: b.text }, imageUrls);
-  } catch (e: any) {
-    // 不记 seen，下一轮重试
-    return c.json({ error: String(e?.message || e) }, 502);
-  }
-  if (rv.no_repost_watermark || rv.not_gundam) {
-    const verdict = rv.no_repost_watermark ? 'watermark' : 'not_gundam';
-    await markSeen(verdict);
-    return c.json({ result: verdict, reason: rv.reason });
-  }
-
-  const url = b.url || `https://x.com/${b.author || 'i'}/status/${id}`;
-  let card;
-  try {
-    ({ card } = await ingestTweet(c.env, url));
-  } catch (e: any) {
-    return c.json({ error: String(e?.message || e) }, 502);
-  }
-  const meta = {
-    auto: true,
-    via: String(b.via || ''),
-    likes: Number(b.likes) || 0,
-    ai_suspect: rv.ai_suspect,
-    cn_artist_suspect: rv.cn_artist_suspect,
-    not_original: rv.not_original,
-    subject: rv.subject,
-    work: rv.work,
-    text_zh: rv.text_zh,
-    reason: rv.reason,
-  };
-  const caption = composeCaption(shortBody(rv), card.author_handle || '');
-  await c.env.DB.prepare('UPDATE cards SET caption = ?, meta_json = ?, updated_at = ? WHERE id = ?')
-    .bind(caption, JSON.stringify(meta), Date.now(), card.id)
-    .run();
-  await markSeen('carded');
-  return c.json({ result: 'carded', card_id: card.id, flags: { ai: rv.ai_suspect, cn: rv.cn_artist_suspect, repost: rv.not_original } });
+  return c.json(await discoverTick(c.env));
 });
 
 /* ---------- 以下全部需要登录 ---------- */
@@ -422,5 +362,6 @@ export default {
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(purgePosted(env));
     ctx.waitUntil(pullNews(env, 3).catch(() => {}));
+    ctx.waitUntil(discoverTick(env).catch(() => {}));
   },
 };

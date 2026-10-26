@@ -4,18 +4,5 @@
   "opencliDir": "C:/Users/<用户>/AppData/Roaming/npm/node_modules/@jackwener/opencli",
   "weiboUid": "<微博数字uid>",
   "workerUrl": "https://gundam.fluct.dev",
-  "discover": {
-    "listId": "<关注列表数字id,x.com/i/lists/后面那串>",
-    "tags": [
-      "#ガンプラ",
-      "#gunpla",
-      "#ガンプラ製作",
-      "#ガンダムイラスト",
-      "#MSイラスト",
-      "#ガンダム"
-    ],
-    "intervalHours": 4,
-    "tagMinLikes": 100,
-    "maxPerRound": 12
-  }
+  "discoverEveryMin": 5
 }

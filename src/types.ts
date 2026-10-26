@@ -8,6 +8,8 @@ export interface Env {
   DEEPSEEK_API_KEY?: string;
   PUB_URL?: string; // N150 发布服务的隧道地址（wrangler.toml [vars]）
   PUB_TOKEN?: string; // 发布服务共享密钥（secret）
+  DISCOVER_TAGS?: string; // 自动找帖的标签，逗号分隔（wrangler.toml [vars]）
+  DISCOVER_ACCOUNTS?: string; // 自动找帖的关注作者 handle，逗号分隔
 }
 
 export interface Extracted {

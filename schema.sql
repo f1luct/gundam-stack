@@ -51,10 +51,20 @@ INSERT OR IGNORE INTO news_seen (source_id, seen_at)
   SELECT source_id, created_at FROM cards
   WHERE source_type = 'news' AND source_id IS NOT NULL;
 
--- 自动找帖"见过表"：N150 送来的候选无论进没进草稿都记一笔，
--- 被看图拒掉的（水印/非高达）和删掉的卡片都不会再被送进来
+-- 自动找帖"见过表"：处理过的候选无论进没进草稿都记一笔，
+-- 被看图拒掉的（水印/非高达）和删掉的卡片都不会再进队列
 CREATE TABLE IF NOT EXISTS x_seen (
   source_id TEXT PRIMARY KEY,
   verdict   TEXT NOT NULL,                 -- carded | watermark | not_gundam | no_image
   seen_at   INTEGER NOT NULL
+);
+
+-- 自动找帖待处理队列：搜到的候选先排在这里，每次 tick 取几条看图
+CREATE TABLE IF NOT EXISTS x_queue (
+  source_id TEXT PRIMARY KEY,
+  payload   TEXT NOT NULL,                 -- 候选 JSON（作者、简介、正文、图片链接）
+  likes     INTEGER NOT NULL DEFAULT 0,
+  via       TEXT NOT NULL,                 -- list | #标签
+  attempts  INTEGER NOT NULL DEFAULT 0,
+  queued_at INTEGER NOT NULL
 );
