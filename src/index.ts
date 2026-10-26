@@ -156,6 +156,9 @@ app.post('/api/news/auto', async (c) => {
   }
 });
 
+// 前端「自动找帖」按钮：登录态下手动推一步
+app.post('/api/discover/run', async (c) => c.json(await discoverTick(c.env)));
+
 // 一键清空新闻草稿：每次最多删 5 张（免费版子请求预算），前端循环调到 remaining=0。
 // 只删卡片，news_seen 见过表保留 → 清掉的新闻永远不会被重新拉进来
 app.post('/api/news/clear', async (c) => {

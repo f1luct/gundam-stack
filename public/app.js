@@ -226,6 +226,7 @@ function renderShell() {
           <input id="url" type="url" inputmode="url" placeholder="粘贴 X / Twitter 推文链接…" />
           <button class="btn-acquire" id="addBtn">抓取</button>
           <button class="btn-news" id="newsBtn" title="抓取 gundam-official.com 最新新闻，AI 生成中文快讯">官方新闻</button>
+          <button class="btn-news" id="discoverBtn" title="从关注作者和标签里找帖，AI 看图筛选后进草稿（平时发布机会自动跑）">自动找帖</button>
         </div>
         <nav class="states" id="tabs"></nav>
         <div class="srcbar" id="srcbar"></div>
@@ -270,6 +271,32 @@ function renderShell() {
 
   // 连续拉取：服务端每轮最多 3 篇（免费版子请求预算），
   // 前端自动一轮轮拉到官网第一页全部入库为止
+  // 手动推几步自动找帖（平时 N150 每 5 分钟推一步）。每步拉一个来源 + 看 2 条图，约 20s
+  const discoverBtn = document.getElementById('discoverBtn');
+  discoverBtn.addEventListener('click', async () => {
+    discoverBtn.disabled = true;
+    let carded = 0;
+    let dropped = 0;
+    try {
+      for (let step = 1; step <= 5; step++) {
+        discoverBtn.textContent = `找帖中 ${step}/5…`;
+        const r = await api('/api/discover/run', { method: 'POST' });
+        if (r.disabled) { toast('没配找帖来源（wrangler.toml 的 DISCOVER_*）', true); break; }
+        for (const p of r.processed || []) {
+          if (p.verdict === 'carded') carded++;
+          else if (p.verdict) dropped++;
+        }
+        if (carded) { state.tab = 'inbox'; await loadCards(); }
+      }
+      toast(`找帖完成：+${carded} 张草稿` + (dropped ? `，丢弃 ${dropped} 条` : ''));
+    } catch (err) {
+      if (err.message !== 'unauthorized') toast(err.message, true);
+    } finally {
+      discoverBtn.disabled = false;
+      discoverBtn.textContent = '自动找帖';
+    }
+  });
+
   const newsBtn = document.getElementById('newsBtn');
   newsBtn.addEventListener('click', async () => {
     newsBtn.disabled = true;

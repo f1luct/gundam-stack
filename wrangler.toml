@@ -40,7 +40,7 @@ id = "e664c27613f6420b8655aa02fedc8b2e"
 PUB_URL = "https://gundam-pub.fluct.dev"
 # 自动找帖（走 fxtwitter 搜索，不用 X 账号）。逗号分隔，留空即关闭
 DISCOVER_TAGS = "#ガンプラ,#gunpla,#ガンプラ製作,#ガンダムイラスト,#MSイラスト,#ガンダム"
-DISCOVER_ACCOUNTS = ""
+DISCOVER_ACCOUNTS = "puras9211,yukimaru0131,magimegido,kuinaGanpura,P8tZg,spd_fs,lasgua01s7341,CAMPLABASE,muchi_chan_,rococo20000,Z84VETZOEN0SG42,neorainsky,Rocks41607316,nimin_asu08,naroku8,ako_nightowl,oskgaku,guratamu"
 
 # 机密用 `wrangler secret put` 设置，不要写在这里：
 #   npx wrangler secret put PUB_TOKEN          直发微博服务的共享密钥(与 N150 config.json 一致)

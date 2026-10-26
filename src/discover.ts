@@ -4,13 +4,13 @@ import { ingestTweet } from './ingest';
 import { composeCaption } from './db';
 import { reviewTweet, shortBody } from './vision';
 
-// 自动找帖：全部在 Worker 里跑，走 fxtwitter 搜索，不碰任何 X 账号。
+// 自动找帖：全部在 Worker 里跑，走 fxtwitter（关注作者拉时间线，标签走搜索），不碰任何 X 账号。
 // 每次 tick（N150 每几分钟来敲一下，或 Cron）只做一小步，守住免费版 50 子请求：
-//   1. 轮到的一个来源搜一次（标签，或一批关注作者的 from: 查询）→ 合格的进 x_queue
+//   1. 轮到的一个来源拉一次（一个关注作者的时间线，或一个标签的搜索）→ 合格的进 x_queue
+//      搜索接口不稳（会成片 404），时间线接口稳得多，所以关注作者逐个拉、不拼 from: 查询
 //   2. 从队列取 PER_TICK 条看图 + 入草稿
 const STATE_KEY = 'sys:discover_state';
 const PER_TICK = 2; // 每条 ≈ 看图 4 + 模型 1 + fx 1 + 存图 4
-const ACCOUNTS_PER_QUERY = 20; // from:a OR from:b ... 一条查询塞多少人
 const KEEP_PER_SOURCE = 8; // 每次搜索最多留几条进队列
 const TAG_MIN_LIKES = 100; // 标签噪音大，卡赞数；关注作者不卡
 const MAX_AGE_MS = 48 * 3600 * 1000;
@@ -18,8 +18,7 @@ const MAX_ATTEMPTS = 3;
 
 interface Source {
   via: string; // 'list' 或标签本身
-  q: string;
-  feed: 'top' | 'latest';
+  url: string;
   minLikes: number;
 }
 
@@ -32,22 +31,22 @@ const splitList = (s?: string) =>
 function sources(env: Env): Source[] {
   const out: Source[] = [];
   const accounts = splitList(env.DISCOVER_ACCOUNTS);
-  for (let i = 0; i < accounts.length; i += ACCOUNTS_PER_QUERY) {
-    const from = accounts.slice(i, i + ACCOUNTS_PER_QUERY).map((a) => `from:${a}`).join(' OR ');
-    out.push({ via: 'list', q: `(${from}) filter:images -filter:retweets -filter:replies`, feed: 'latest', minLikes: 0 });
+  for (const a of accounts) {
+    out.push({ via: 'list', url: `https://api.fxtwitter.com/2/profile/${encodeURIComponent(a)}/statuses`, minLikes: 0 });
   }
   for (const tag of splitList(env.DISCOVER_TAGS)) {
     const t = tag.startsWith('#') ? tag : '#' + tag;
-    out.push({ via: t, q: `${t} filter:images -filter:retweets -filter:replies`, feed: 'top', minLikes: TAG_MIN_LIKES });
+    const q = `${t} filter:images -filter:retweets -filter:replies`;
+    out.push({ via: t, url: `https://api.fxtwitter.com/2/search?q=${encodeURIComponent(q)}&feed=top`, minLikes: TAG_MIN_LIKES });
   }
   return out;
 }
 
 async function gather(env: Env, src: Source): Promise<number> {
-  const url = `https://api.fxtwitter.com/2/search?q=${encodeURIComponent(src.q)}&feed=${src.feed}`;
-  const r = await fetch(url, { headers: { 'User-Agent': UA } });
-  if (!r.ok) throw new Error(`搜索失败 (${r.status}): ${src.via}`);
+  const r = await fetch(src.url, { headers: { 'User-Agent': UA } });
+  if (!r.ok) throw new Error(`拉取失败 (${r.status}): ${src.via}`);
   const j: any = await r.json();
+  if (j.code && j.code !== 200) throw new Error(`拉取失败 (${j.code}): ${src.via}`);
   const cutoff = Date.now() - MAX_AGE_MS;
   const picks = (j.results || [])
     .filter((s: any) => !s.reposted_by && !s.replying_to)
