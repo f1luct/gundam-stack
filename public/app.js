@@ -462,9 +462,10 @@ function cardEl(card) {
   const autoTags = meta.auto
     ? `<span class="auto-tag">AUTO · ${esc(meta.via === 'list' ? '关注列表' : meta.via || '')}</span>` +
       (meta.ai_suspect ? '<span class="flag">疑似AI</span>' : '') +
-      (meta.cn_artist_suspect ? '<span class="flag">疑似国内作者</span>' : '')
+      (meta.cn_artist_suspect ? '<span class="flag">疑似国内作者</span>' : '') +
+      (meta.not_original ? '<span class="flag">非原作者</span>' : '')
     : '';
-  const flagReason = meta.auto && meta.reason && (meta.ai_suspect || meta.cn_artist_suspect)
+  const flagReason = meta.auto && meta.reason && (meta.ai_suspect || meta.cn_artist_suspect || meta.not_original)
     ? `<div class="unit-title flag-reason">${esc(meta.reason)}</div>`
     : '';
   // 简洁文案 ⇄ 附上原文（有中文译文用译文，否则用原文）

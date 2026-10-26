@@ -12,6 +12,7 @@ export interface Review {
   no_repost_watermark: boolean; // 图上有显眼的禁止转载水印 → 绝对不转
   ai_suspect: boolean; // 疑似 AI 生成
   cn_artist_suspect: boolean; // 疑似中国画师/模型师
+  not_original: boolean; // 发帖人不是作者（搬运号/资讯号）
   subject: string; // 图里的机体或人物，中文圈通行叫法
   work: string; // 出处作品
   keep_text: boolean; // 原文是否有趣到值得附上
@@ -56,10 +57,13 @@ const SYSTEM =
   '只看图片本身；作者签名、普通 logo、简介里写的禁转都不算。\n' +
   'ai_suspect: 画面像 AI 生成（结构错乱、细节糊成一团、典型 AI 质感），或正文/简介带 #AIart #AIイラスト 等标签时为 true。\n' +
   'cn_artist_suspect: 作者看起来是中国大陆画师或模型师（简介或正文用简体中文、写了中国城市、贴了微博/B站/小红书链接等）时为 true。\n' +
-  'subject: 图里的主要机体或人物，用中文圈通行叫法（如「RX-78-2 高达」「夏亚·阿兹纳布尔」）；认不出就写空字符串，不要瞎猜。\n' +
-  'work: 出处作品的中文通行译名（如「机动战士高达 逆袭的夏亚」）；高达模型作品就写对应机体出处；不确定写空字符串。\n' +
-  'keep_text: 原文本身很有趣、有梗、值得给中文读者看时为 true；普通的作品发布说明、标签堆砌、宣传语一律 false。\n' +
-  'text_zh: keep_text 为 true 时给出原文的中文译文（去掉标签），否则空字符串。\n' +
+  'not_original: 发帖人明显不是作者本人（正文写 Credit / 出处 / 転載 / via 某人，或账号是搬运号、资讯号）时为 true。\n' +
+  'subject: 图里的主要机体或人物。正文或标签里写了名字（常见是片假名或英文、型号、HG/MG 商品名）就以正文为准，' +
+  '换成中文圈通行译名；没有把握的中文译名就直接保留原文写法（如「リ・ガズィ・カスタム」），绝不凭字面音译。' +
+  '正文没写时才看图辨认，认不出就写空字符串。\n' +
+  'work: 出处作品的中文通行译名，只在确定时填写，否则写空字符串。\n' +
+  'keep_text: 默认 false。只有原文是一句有梗、有情绪、让人想笑的话（不是作品说明、制作过程、宣传、标签、署名、链接）时才为 true。\n' +
+  'text_zh: keep_text 为 true 时给出那句话的中文译文（去掉标签和链接），否则空字符串。\n' +
   'reason: 若任一 true 标记，用一句中文说明依据；否则空字符串。';
 
 export async function reviewTweet(env: Env, c: Candidate, imageUrls: string[]): Promise<Review> {
@@ -87,8 +91,9 @@ export async function reviewTweet(env: Env, c: Candidate, imageUrls: string[]): 
         },
       ],
       response_format: { type: 'json_object' },
-      thinking: { type: 'disabled' },
-      max_tokens: 600,
+      // 开思考：实测认机体和出处明显更准（12 条样本），每条约 8s，Worker 只算 CPU 不算等待
+      thinking: { type: 'enabled' },
+      max_tokens: 4000,
       stream: false,
     }),
   });
@@ -109,6 +114,7 @@ export async function reviewTweet(env: Env, c: Candidate, imageUrls: string[]): 
     no_repost_watermark: !!out.no_repost_watermark,
     ai_suspect: !!out.ai_suspect,
     cn_artist_suspect: !!out.cn_artist_suspect,
+    not_original: !!out.not_original,
     subject: s(out.subject),
     work: s(out.work),
     keep_text: !!out.keep_text,

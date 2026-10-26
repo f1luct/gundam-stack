@@ -144,6 +144,7 @@ app.post('/api/discover/candidate', async (c) => {
     likes: Number(b.likes) || 0,
     ai_suspect: rv.ai_suspect,
     cn_artist_suspect: rv.cn_artist_suspect,
+    not_original: rv.not_original,
     subject: rv.subject,
     work: rv.work,
     text_zh: rv.text_zh,
@@ -154,7 +155,7 @@ app.post('/api/discover/candidate', async (c) => {
     .bind(caption, JSON.stringify(meta), Date.now(), card.id)
     .run();
   await markSeen('carded');
-  return c.json({ result: 'carded', card_id: card.id, flags: { ai: rv.ai_suspect, cn: rv.cn_artist_suspect } });
+  return c.json({ result: 'carded', card_id: card.id, flags: { ai: rv.ai_suspect, cn: rv.cn_artist_suspect, repost: rv.not_original } });
 });
 
 /* ---------- 以下全部需要登录 ---------- */
