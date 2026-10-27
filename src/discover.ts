@@ -13,7 +13,7 @@ const STATE_KEY = 'sys:discover_state';
 const PER_TICK = 2; // 每条 ≈ 看图 4 + 模型 1 + fx 1 + 存图 4
 const KEEP_PER_SOURCE = 8; // 每次搜索最多留几条进队列
 const TAG_MIN_LIKES = 100; // 标签噪音大，卡赞数；关注作者不卡
-const MAX_AGE_MS = 48 * 3600 * 1000;
+const MAX_AGE_MS = 7 * 24 * 3600 * 1000; // 画师一周才发一两张，48 小时太短
 const MAX_ATTEMPTS = 3;
 
 interface Source {
