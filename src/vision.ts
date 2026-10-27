@@ -126,8 +126,7 @@ export async function reviewTweet(env: Env, c: Candidate, imageUrls: string[]): 
   };
 }
 
-// 简洁配文：机体/人物 + 作品；原文有趣才附译文。末行署名交给 composeCaption
+// 简洁配文：只写机体/人物，不带作品名；原文有趣才附译文。末行署名交给 composeCaption
 export function shortBody(rv: Review): string {
-  const head = [rv.subject, rv.work && `《${rv.work.replace(/^《|》$/g, '')}》`].filter(Boolean).join(' ');
-  return [head, rv.keep_text ? rv.text_zh : ''].filter(Boolean).join('\n\n');
+  return [rv.subject, rv.keep_text ? rv.text_zh : ''].filter(Boolean).join('\n\n');
 }

@@ -496,7 +496,7 @@ function cardEl(card) {
     ? `<div class="unit-title flag-reason">${esc(meta.reason)}</div>`
     : '';
   // 简洁文案 ⇄ 附上原文（有中文译文用译文，否则用原文）
-  const shortHead = [meta.subject, meta.work && '《' + meta.work.replace(/^《|》$/g, '') + '》'].filter(Boolean).join(' ');
+  const shortHead = meta.subject || '';
   const extraText = (meta.text_zh || card.text_original || '').trim();
 
   const shots = (card.images || [])
