@@ -65,9 +65,9 @@ async function gather(env: Env, src: Source, accounts: Set<string>): Promise<num
     .sort((a: any, b: any) => Number(b.likes || 0) - Number(a.likes || 0))
     .slice(0, KEEP_PER_SOURCE);
 
-  let added = 0;
-  for (const s of picks) {
-    const payload = {
+  return enqueueCandidates(
+    env,
+    picks.map((s: any) => ({
       id: String(s.id),
       url: s.url,
       author: s.author?.screen_name || '',
@@ -76,8 +76,26 @@ async function gather(env: Env, src: Source, accounts: Set<string>): Promise<num
       likes: Number(s.likes || 0),
       media_urls: (s.media.photos as any[]).map((p) => p.url),
       via: s.reposted_by ? `rt:${s.reposted_by.screen_name}` : src.via,
-    };
-    // 见过的、已有卡片的不进队列；已在队列里的只刷新赞数
+    })),
+  );
+}
+
+export interface Candidate {
+  id: string;
+  url: string;
+  author: string;
+  bio: string;
+  text: string;
+  likes: number;
+  media_urls: string[];
+  via: string;
+}
+
+// 候选进队列：见过的、已有卡片的不进；已在队列里的只刷新赞数。
+// N150 用 opencli 搜标签的结果也走这里（/api/discover/enqueue）
+export async function enqueueCandidates(env: Env, items: Candidate[]): Promise<number> {
+  let added = 0;
+  for (const payload of items) {
     const res = await env.DB.prepare(
       `INSERT INTO x_queue (source_id, payload, likes, via, queued_at)
        SELECT ?1, ?2, ?3, ?4, ?5
@@ -154,10 +172,10 @@ export async function discoverTick(env: Env): Promise<Record<string, any>> {
     }
   }
 
-  // 2. 清掉过期的，再按「关注作者优先、赞数高优先」取几条处理
+  // 2. 清掉过期的，再按赞数从高到低取几条处理（标签搜来的热门图和关注作者一起排）
   await env.DB.prepare('DELETE FROM x_queue WHERE queued_at < ?').bind(Date.now() - MAX_AGE_MS).run();
   const rows = await env.DB.prepare(
-    "SELECT source_id, payload, attempts FROM x_queue ORDER BY (via = 'list') DESC, likes DESC LIMIT ?",
+    'SELECT source_id, payload, attempts FROM x_queue ORDER BY likes DESC LIMIT ?',
   )
     .bind(PER_TICK)
     .all();

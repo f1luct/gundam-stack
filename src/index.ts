@@ -5,7 +5,7 @@ import { authMiddleware, makeToken, checkPassword, COOKIE_NAME } from './auth';
 import { ingestTweet } from './ingest';
 import { pullNews } from './news';
 import { translate } from './translate';
-import { discoverTick } from './discover';
+import { discoverTick, enqueueCandidates, type Candidate } from './discover';
 import { attachImages, getCardWithImages, composeCaption, deleteCard } from './db';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -96,6 +96,16 @@ app.post('/api/scheduled/:id/failed', async (c) => {
 app.post('/api/discover/tick', async (c) => {
   if (!pubTokenOk(c)) return c.json({ error: '未授权' }, 401);
   return c.json(await discoverTick(c.env));
+});
+
+// N150 用 opencli 搜标签（fxtwitter 搜索长期 404），搜到的候选直接塞进队列，看图照旧由 tick 做
+app.post('/api/discover/enqueue', async (c) => {
+  if (!pubTokenOk(c)) return c.json({ error: '未授权' }, 401);
+  const b = await c.req.json<{ items?: Candidate[] }>().catch(() => ({}) as { items?: Candidate[] });
+  const items = (b.items || [])
+    .filter((x) => x && /^\d+$/.test(String(x.id)) && Array.isArray(x.media_urls) && x.media_urls.length)
+    .slice(0, 30);
+  return c.json({ added: await enqueueCandidates(c.env, items) });
 });
 
 /* ---------- 以下全部需要登录 ---------- */
