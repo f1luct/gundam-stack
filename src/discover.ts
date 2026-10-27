@@ -15,6 +15,9 @@ const KEEP_PER_SOURCE = 8; // 每次搜索最多留几条进队列
 const TAG_MIN_LIKES = 100; // 标签噪音大，卡赞数；关注作者不卡
 const MAX_AGE_MS = 7 * 24 * 3600 * 1000; // 画师一周才发一两张，48 小时太短
 const MAX_ATTEMPTS = 3;
+const REPOST_MIN_LIKES = 50; // 关注作者转发的别人的图：算发散来源，稍微卡一下赞数
+const BACKOFF_KEY = 'sys:discover_backoff_until';
+const BACKOFF_MS = 30 * 60 * 1000; // fxtwitter 回 429 就整体歇 30 分钟，不硬碰
 
 interface Source {
   via: string; // 'list' 或标签本身
@@ -42,16 +45,22 @@ function sources(env: Env): Source[] {
   return out;
 }
 
-async function gather(env: Env, src: Source): Promise<number> {
+class RateLimited extends Error {}
+
+async function gather(env: Env, src: Source, accounts: Set<string>): Promise<number> {
   const r = await fetch(src.url, { headers: { 'User-Agent': UA } });
+  if (r.status === 429) throw new RateLimited(`被限流 (429): ${src.via}`);
   if (!r.ok) throw new Error(`拉取失败 (${r.status}): ${src.via}`);
   const j: any = await r.json();
+  if (j.code === 429) throw new RateLimited(`被限流 (429): ${src.via}`);
   if (j.code && j.code !== 200) throw new Error(`拉取失败 (${j.code}): ${src.via}`);
   const cutoff = Date.now() - MAX_AGE_MS;
   const picks = (j.results || [])
-    .filter((s: any) => !s.reposted_by && !s.replying_to)
+    .filter((s: any) => !s.replying_to)
+    // 转发：作者不在名单里的才要（名单里的人自己会轮到），这是发现新作者的入口
+    .filter((s: any) => !s.reposted_by || (src.via === 'list' && !accounts.has(String(s.author?.screen_name || '').toLowerCase())))
     .filter((s: any) => (s.media?.photos || []).length)
-    .filter((s: any) => Number(s.likes || 0) >= src.minLikes)
+    .filter((s: any) => Number(s.likes || 0) >= (s.reposted_by ? REPOST_MIN_LIKES : src.minLikes))
     .filter((s: any) => (s.created_timestamp ? s.created_timestamp * 1000 : Date.parse(s.created_at)) >= cutoff)
     .sort((a: any, b: any) => Number(b.likes || 0) - Number(a.likes || 0))
     .slice(0, KEEP_PER_SOURCE);
@@ -66,7 +75,7 @@ async function gather(env: Env, src: Source): Promise<number> {
       text: s.text || '',
       likes: Number(s.likes || 0),
       media_urls: (s.media.photos as any[]).map((p) => p.url),
-      via: src.via,
+      via: s.reposted_by ? `rt:${s.reposted_by.screen_name}` : src.via,
     };
     // 见过的、已有卡片的不进队列；已在队列里的只刷新赞数
     const res = await env.DB.prepare(
@@ -131,11 +140,18 @@ export async function discoverTick(env: Env): Promise<Record<string, any>> {
   // 1. 轮转来源，每次一个
   const state = JSON.parse((await env.IMAGES.get(STATE_KEY)) || '{"cursor":0}');
   const src = srcs[state.cursor % srcs.length];
-  await env.IMAGES.put(STATE_KEY, JSON.stringify({ cursor: (state.cursor + 1) % srcs.length }));
-  try {
-    log.gathered = { via: src.via, added: await gather(env, src) };
-  } catch (e: any) {
-    log.gathered = { via: src.via, error: String(e?.message || e) };
+  const backoffUntil = Number((await env.IMAGES.get(BACKOFF_KEY)) || '0');
+  if (Date.now() < backoffUntil) {
+    log.gathered = { skipped: 'backoff', until: new Date(backoffUntil).toISOString() };
+  } else {
+    await env.IMAGES.put(STATE_KEY, JSON.stringify({ cursor: (state.cursor + 1) % srcs.length }));
+    const accounts = new Set(splitList(env.DISCOVER_ACCOUNTS).map((a) => a.toLowerCase()));
+    try {
+      log.gathered = { via: src.via, added: await gather(env, src, accounts) };
+    } catch (e: any) {
+      log.gathered = { via: src.via, error: String(e?.message || e) };
+      if (e instanceof RateLimited) await env.IMAGES.put(BACKOFF_KEY, String(Date.now() + BACKOFF_MS));
+    }
   }
 
   // 2. 清掉过期的，再按「关注作者优先、赞数高优先」取几条处理

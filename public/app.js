@@ -487,7 +487,7 @@ function cardEl(card) {
 
   // 自动找帖的卡片：来源 + 看图红牌（AI / 国内画师只提示不拦，留给人判断）
   const autoTags = meta.auto
-    ? `<span class="auto-tag">AUTO · ${esc(meta.via === 'list' ? '关注列表' : meta.via || '')}</span>` +
+    ? `<span class="auto-tag">AUTO · ${esc(meta.via === 'list' ? '关注列表' : /^rt:/.test(meta.via || '') ? '@' + meta.via.slice(3) + ' 转发' : meta.via || '')}</span>` +
       (meta.ai_suspect ? '<span class="flag">疑似AI</span>' : '') +
       (meta.cn_artist_suspect ? '<span class="flag">疑似国内作者</span>' : '') +
       (meta.not_original ? '<span class="flag">非原作者</span>' : '')
