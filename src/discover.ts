@@ -97,8 +97,8 @@ async function processOne(env: Env, b: any): Promise<string> {
     return 'no_image';
   }
   const rv = await reviewTweet(env, { author: b.author, bio: b.bio, text: b.text }, imageUrls);
-  if (rv.no_repost_watermark || rv.not_gundam) {
-    const verdict = rv.no_repost_watermark ? 'watermark' : 'not_gundam';
+  if (rv.no_repost_watermark || rv.not_gundam || rv.low_value) {
+    const verdict = rv.no_repost_watermark ? 'watermark' : rv.not_gundam ? 'not_gundam' : 'low_value';
     await markSeen(env, b.id, verdict);
     return verdict;
   }

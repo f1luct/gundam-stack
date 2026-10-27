@@ -9,6 +9,7 @@ const MAX_IMG_BYTES = 4 * 1024 * 1024;
 
 export interface Review {
   not_gundam: boolean; // 不是高达相关（标签搜索会混进别的）
+  low_value: boolean; // 普通素组 / 制作过程 / 商品图，没搬运价值
   no_repost_watermark: boolean; // 图上有显眼的禁止转载水印 → 绝对不转
   ai_suspect: boolean; // 疑似 AI 生成
   cn_artist_suspect: boolean; // 疑似中国画师/模型师
@@ -53,6 +54,7 @@ async function toDataUrl(u: string): Promise<string | null> {
 const SYSTEM =
   '你是高达微博搬运号的审图编辑。给你一条 X 推文的图片、正文和作者简介，判断能不能搬运并写配文。只输出 JSON，字段：\n' +
   'not_gundam: 图片内容和高达系列（机体、角色、高达模型）无关时为 true。\n' +
+  'low_value: 没有搬运价值时为 true。我们只要两类：①高达插画/同人图；②有真本事的模型作品（明显的自定义涂装、改造/拼装、场景或特别出色的摄影）。以下一律算 low_value：基本照说明书拼好的普通成品（素组、只贴了水贴或简单分色）、几台普通成品的合影、制作过程/半成品/喷涂中/零件摊开、开箱和板件照、商品宣传图。拿不准时偏向 true。\n' +
   'no_repost_watermark: 图片上有显眼的「禁止转载 / 無断転載禁止 / 転載禁止 / DO NOT REPOST」之类的水印或文字时为 true。' +
   '只看图片本身；作者签名、普通 logo、简介里写的禁转都不算。\n' +
   'ai_suspect: 画面像 AI 生成（结构错乱、细节糊成一团、典型 AI 质感），或正文/简介带 #AIart #AIイラスト 等标签时为 true。\n' +
@@ -111,6 +113,7 @@ export async function reviewTweet(env: Env, c: Candidate, imageUrls: string[]): 
   const s = (v: any) => (typeof v === 'string' ? v.trim() : '');
   return {
     not_gundam: !!out.not_gundam,
+    low_value: !!out.low_value,
     no_repost_watermark: !!out.no_repost_watermark,
     ai_suspect: !!out.ai_suspect,
     cn_artist_suspect: !!out.cn_artist_suspect,
