@@ -365,6 +365,10 @@ async function loadCards() {
   }
 }
 
+function cardMeta(card) {
+  try { return JSON.parse(card.meta_json || '{}') || {}; } catch { return {}; }
+}
+
 // 来源筛选条:全部 / X / 新闻;当前标签下按来源过滤,新闻筛选时提供一键清空草稿
 function renderSrcBar() {
   const el = document.getElementById('srcbar');
@@ -379,10 +383,13 @@ function renderSrcBar() {
         `<button class="chip ${state.src === f.key ? 'active' : ''}" data-src="${f.key}">${f.label}<b>${f.n}</b></button>`,
     )
     .join('');
+  const auto = state.cards.filter((c) => c.source_type === 'twitter' && cardMeta(c).auto).length;
   const clearBtn =
     state.tab === 'inbox' && state.src === 'news' && news
       ? '<button class="chip chip-danger" id="clearNews">✕ 清空新闻草稿</button>'
-      : '';
+      : state.tab === 'inbox' && state.src === 'x' && auto
+        ? '<button class="chip chip-danger" id="clearAuto">✕ 清空自动找帖草稿</button>'
+        : '';
   el.innerHTML = chips + clearBtn;
   el.querySelectorAll('[data-src]').forEach((b) =>
     b.addEventListener('click', () => {
@@ -406,6 +413,25 @@ function renderSrcBar() {
           if (!r.remaining) break;
         }
         toast(`已清空 ${removed} 条新闻草稿`);
+      } catch (err) {
+        if (err.message !== 'unauthorized') toast(err.message, true);
+      }
+      await loadCards();
+    });
+  const clrAuto = document.getElementById('clearAuto');
+  if (clrAuto)
+    clrAuto.addEventListener('click', async () => {
+      if (!confirm(`清空剩下的 ${auto} 张自动找帖草稿？\n手动抓的和待发的不动；清掉的帖子不会再被抓回来。`)) return;
+      clrAuto.disabled = true;
+      clrAuto.textContent = '清空中…';
+      try {
+        let removed = 0;
+        for (let i = 0; i < 40; i++) {
+          const r = await api('/api/discover/clear', { method: 'POST' });
+          removed += r.removed;
+          if (!r.remaining || !r.removed) break;
+        }
+        toast(`已清空 ${removed} 张自动草稿`);
       } catch (err) {
         if (err.message !== 'unauthorized') toast(err.message, true);
       }

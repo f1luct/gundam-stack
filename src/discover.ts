@@ -31,9 +31,23 @@ const splitList = (s?: string) =>
     .map((x) => x.trim().replace(/^@/, ''))
     .filter(Boolean);
 
-function sources(env: Env): Source[] {
+// 关注作者 = wrangler.toml 的名单 + Haven 选中过的名单外作者（x_authors），黑名单除外
+async function followed(env: Env): Promise<string[]> {
+  const blocked = new Set(splitList(env.DISCOVER_BLOCK).map((a) => a.toLowerCase()));
+  const rows = await env.DB.prepare('SELECT handle FROM x_authors ORDER BY added_at').all();
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const a of [...splitList(env.DISCOVER_ACCOUNTS), ...(rows.results || []).map((r: any) => String(r.handle))]) {
+    const k = a.toLowerCase();
+    if (seen.has(k) || blocked.has(k)) continue;
+    seen.add(k);
+    out.push(a);
+  }
+  return out;
+}
+
+function sources(env: Env, accounts: string[]): Source[] {
   const out: Source[] = [];
-  const accounts = splitList(env.DISCOVER_ACCOUNTS);
   for (const a of accounts) {
     out.push({ via: 'list', url: `https://api.fxtwitter.com/2/profile/${encodeURIComponent(a)}/statuses`, minLikes: 0 });
   }
@@ -153,7 +167,8 @@ async function processOne(env: Env, b: any): Promise<string> {
 }
 
 export async function discoverTick(env: Env): Promise<Record<string, any>> {
-  const srcs = sources(env);
+  const accountList = await followed(env);
+  const srcs = sources(env, accountList);
   if (!srcs.length) return { disabled: true };
   const log: Record<string, any> = {};
 
@@ -165,7 +180,7 @@ export async function discoverTick(env: Env): Promise<Record<string, any>> {
     log.gathered = { skipped: 'backoff', until: new Date(backoffUntil).toISOString() };
   } else {
     await env.IMAGES.put(STATE_KEY, JSON.stringify({ cursor: (state.cursor + 1) % srcs.length }));
-    const accounts = new Set(splitList(env.DISCOVER_ACCOUNTS).map((a) => a.toLowerCase()));
+    const accounts = new Set(accountList.map((a) => a.toLowerCase()));
     try {
       log.gathered = { via: src.via, added: await gather(env, src, accounts) };
     } catch (e: any) {
@@ -202,4 +217,28 @@ export async function discoverTick(env: Env): Promise<Record<string, any>> {
   const left = await env.DB.prepare('SELECT COUNT(*) AS n FROM x_queue').first<{ n: number }>();
   log.queue = Number(left?.n ?? 0);
   return log;
+}
+
+// 记下 Haven 对一张自动卡片的选择。只记草稿里的自动卡；选中的名单外作者加进来源
+export async function recordChoice(env: Env, card: any, choice: 'picked' | 'dropped'): Promise<void> {
+  if (!card || card.status !== 'inbox' || card.source_type !== 'twitter' || !card.source_id) return;
+  let meta: any = {};
+  try {
+    meta = JSON.parse(card.meta_json || '{}');
+  } catch {}
+  if (!meta.auto) return;
+  const author = String(card.author_handle || '');
+  await env.DB.prepare('INSERT OR REPLACE INTO x_feedback (source_id, author, choice, meta_json, at) VALUES (?, ?, ?, ?, ?)')
+    .bind(card.source_id, author, choice, card.meta_json, Date.now())
+    .run();
+  if (choice !== 'picked' || !author) return;
+  const k = author.toLowerCase();
+  const listed = splitList(env.DISCOVER_ACCOUNTS).some((a) => a.toLowerCase() === k);
+  const blocked = splitList(env.DISCOVER_BLOCK).some((a) => a.toLowerCase() === k);
+  if (listed || blocked) return;
+  await env.DB.prepare(
+    'INSERT INTO x_authors (handle, picks, added_at) VALUES (?, 1, ?) ON CONFLICT(handle) DO UPDATE SET picks = picks + 1',
+  )
+    .bind(k, Date.now())
+    .run();
 }

@@ -5,7 +5,7 @@ import { authMiddleware, makeToken, checkPassword, COOKIE_NAME } from './auth';
 import { ingestTweet } from './ingest';
 import { pullNews } from './news';
 import { translate } from './translate';
-import { discoverTick, enqueueCandidates, type Candidate } from './discover';
+import { discoverTick, enqueueCandidates, recordChoice, type Candidate } from './discover';
 import { attachImages, getCardWithImages, composeCaption, deleteCard } from './db';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -183,6 +183,18 @@ app.post('/api/news/clear', async (c) => {
   return c.json({ removed: ids.length, remaining: Number(left?.n ?? 0) });
 });
 
+// 一键清空自动找帖草稿：Haven 挑完剩下的。每张都记成 dropped（以后调筛选用），x_seen 保留不会再抓回来
+const AUTO_INBOX = "source_type = 'twitter' AND status = 'inbox' AND json_extract(meta_json, '$.auto') = 1";
+app.post('/api/discover/clear', async (c) => {
+  const rows = await c.env.DB.prepare(`SELECT * FROM cards WHERE ${AUTO_INBOX} ORDER BY created_at ASC LIMIT 5`).all();
+  for (const card of (rows.results || []) as any[]) {
+    await recordChoice(c.env, card, 'dropped');
+    await deleteCard(c.env, card.id);
+  }
+  const left = await c.env.DB.prepare(`SELECT COUNT(*) AS n FROM cards WHERE ${AUTO_INBOX}`).first<{ n: number }>();
+  return c.json({ removed: (rows.results || []).length, remaining: Number(left?.n ?? 0) });
+});
+
 // 手动创建卡片（非 Twitter 内容的兜底）
 app.post('/api/cards', async (c) => {
   const body = await c.req.json<any>().catch(() => ({}));
@@ -257,6 +269,10 @@ app.patch('/api/cards/:id', async (c) => {
     vals.push(null);
   }
   if (!fields.length) return c.json({ error: '没有可更新的字段' }, 400);
+  if (body.status === 'queued' || body.status === 'posted') {
+    const before = await c.env.DB.prepare('SELECT * FROM cards WHERE id = ?').bind(id).first();
+    await recordChoice(c.env, before, 'picked');
+  }
   fields.push('updated_at = ?');
   vals.push(Date.now());
   vals.push(id);
@@ -316,6 +332,7 @@ app.post('/api/cards/:id/publish', async (c) => {
     return c.json({ error: j.error || `发布服务出错 (HTTP ${r.status})` }, 502);
   }
 
+  await recordChoice(c.env, card, 'picked');
   const now = Date.now();
   await c.env.DB.prepare(
     "UPDATE cards SET status = 'posted', posted_at = ?, updated_at = ? WHERE id = ?",
@@ -327,7 +344,9 @@ app.post('/api/cards/:id/publish', async (c) => {
 
 // 删除（连带删图片）
 app.delete('/api/cards/:id', async (c) => {
-  await deleteCard(c.env, c.req.param('id'));
+  const id = c.req.param('id');
+  await recordChoice(c.env, await c.env.DB.prepare('SELECT * FROM cards WHERE id = ?').bind(id).first(), 'dropped');
+  await deleteCard(c.env, id);
   return c.json({ ok: true });
 });
 

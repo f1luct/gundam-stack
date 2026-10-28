@@ -68,3 +68,20 @@ CREATE TABLE IF NOT EXISTS x_queue (
   attempts  INTEGER NOT NULL DEFAULT 0,
   queued_at INTEGER NOT NULL
 );
+
+-- Haven 对自动卡片的挑选记录：选进待发/直接发 = picked，草稿里删掉 = dropped
+-- 用来调看图筛选、找出值得加进来源的作者
+CREATE TABLE IF NOT EXISTS x_feedback (
+  source_id TEXT PRIMARY KEY,
+  author    TEXT NOT NULL,
+  choice    TEXT NOT NULL,                 -- picked | dropped
+  meta_json TEXT,                          -- 卡片的看图结果（via、likes、subject、标记、理由）
+  at        INTEGER NOT NULL
+);
+
+-- 名单外、被 Haven 选中过的作者，自动加进找帖来源（和 DISCOVER_ACCOUNTS 一起轮转）
+CREATE TABLE IF NOT EXISTS x_authors (
+  handle   TEXT PRIMARY KEY,               -- 小写
+  picks    INTEGER NOT NULL DEFAULT 1,
+  added_at INTEGER NOT NULL
+);
