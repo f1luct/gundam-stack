@@ -43,6 +43,8 @@ PUB_URL = "https://gundam-pub.fluct.dev"
 DISCOVER_TAGS = ""
 # 从 @haven_xia 的关注/点赞出发挑的高达画师为主，模型只留改造/涂装表现强的（明细见 E:\DEV\misc\gundam-x-accounts.csv）
 DISCOVER_ACCOUNTS = "takaf0503,okrdisk2000,DTZ1200WG,O15RXnhQL8nvfYW,jJcq1UcKLRmwvOT,mechafanatic,water_melon1310,ZA_CLN,eiko_qn,o6nuqm,240eukrante,NIN_NIN_G,s_kei_jpn,kobakin1967,Trunnec,MUTTTOWOOOO,skchkkooo,hiroyuki_taiga,mlpmpmp,yu11142911,OAKaKI000,nicovol48,masakadokun,moske_3,wingsyo345"
+# 不搬运的作者：搬运党、不标原画师的号（Haven 指定）
+DISCOVER_BLOCK = "HI_ME_KA____"
 
 # 机密用 `wrangler secret put` 设置，不要写在这里：
 #   npx wrangler secret put PUB_TOKEN          直发微博服务的共享密钥(与 N150 config.json 一致)

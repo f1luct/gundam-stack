@@ -94,8 +94,10 @@ export interface Candidate {
 // 候选进队列：见过的、已有卡片的不进；已在队列里的只刷新赞数。
 // N150 用 opencli 搜标签的结果也走这里（/api/discover/enqueue）
 export async function enqueueCandidates(env: Env, items: Candidate[]): Promise<number> {
+  const blocked = new Set(splitList(env.DISCOVER_BLOCK).map((a) => a.toLowerCase()));
   let added = 0;
   for (const payload of items) {
+    if (blocked.has(payload.author.toLowerCase())) continue;
     const res = await env.DB.prepare(
       `INSERT INTO x_queue (source_id, payload, likes, via, queued_at)
        SELECT ?1, ?2, ?3, ?4, ?5
