@@ -323,7 +323,9 @@ async function searchOneTag() {
   if (!tags.length || !OPENCLI_JS) return;
   const tag = tags[xsCursor++ % tags.length];
   const minFaves = XS.minLikes ?? 200;
-  const q = `${tag} filter:images -filter:retweets -filter:replies min_faves:${minFaves}`;
+  // 条目可以是 #标签,也可以是关键词组合;含 OR 的加括号,免得和后面的过滤条件绑错
+  const term = / OR /.test(tag) ? `(${tag})` : tag;
+  const q = `${term} filter:images -filter:retweets -filter:replies min_faves:${minFaves}`;
   // 和发微博共用一条串行队列,不在 Chrome 里打架
   const { code, out } = await enqueue(() =>
     runOpencliRetry(['twitter', 'search', q, '--product', 'top', '--limit', '20', '-f', 'json']),
