@@ -22,6 +22,7 @@ export interface CardOut {
   posted_at: number | null;
   created_at: number;
   updated_at: number;
+  meta_json?: string | null;
   images: CardImage[];
 }
 

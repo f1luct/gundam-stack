@@ -280,7 +280,95 @@ async function pollScheduled() {
   }
 }
 
+/* ---------- 自动找帖心跳:找帖和看图都在 Worker 里,这里只负责定时敲一下 ----------
+   (Worker 的 Cron 开不了才需要这个;discoverEveryMin 设 0 关闭) */
+
+const DISCOVER_EVERY_MS = (CFG.discoverEveryMin ?? 5) * 60 * 1000;
+
+async function tickDiscover() {
+  const base = (CFG.workerUrl || '').replace(/\/+$/, '');
+  try {
+    const r = await fetch(base + '/api/discover/tick', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${CFG.pubToken}` },
+    });
+    const j = await r.json().catch(() => ({}));
+    const done = (j.processed || []).map((p) => p.verdict || 'error').join(',');
+    if (done || j.gathered?.error) console.log('[discover]', JSON.stringify(j));
+  } catch {
+    /* 下一轮再说 */
+  }
+}
+
+/* ---------- 标签搜索:fxtwitter 搜索长期 404,改由这里用 opencli 读 X(本机 Chrome 的登录态) ----------
+   每 xSearch.everyMin 分钟只搜一个标签、只翻一页,频率和人随手刷差不多。
+   搜到的图片帖送 Worker 排队,看图筛选照旧在 Worker 里做。config 里不配 xSearch 就不跑 */
+
+const XS = CFG.xSearch || null;
+let xsCursor = 0;
+
+function parseJsonArray(out) {
+  const a = out.indexOf('[');
+  const b = out.lastIndexOf(']');
+  if (a < 0 || b < a) return [];
+  try {
+    return JSON.parse(out.slice(a, b + 1)) || [];
+  } catch {
+    return [];
+  }
+}
+
+async function searchOneTag() {
+  const tags = XS.tags || [];
+  if (!tags.length || !OPENCLI_JS) return;
+  const tag = tags[xsCursor++ % tags.length];
+  const minFaves = XS.minLikes ?? 200;
+  // 条目可以是 #标签,也可以是关键词组合;含 OR 的加括号,免得和后面的过滤条件绑错
+  const term = / OR /.test(tag) ? `(${tag})` : tag;
+  const q = `${term} filter:images -filter:retweets -filter:replies min_faves:${minFaves}`;
+  // 和发微博共用一条串行队列,不在 Chrome 里打架
+  const { code, out } = await enqueue(() =>
+    runOpencliRetry(['twitter', 'search', q, '--product', 'top', '--limit', '20', '-f', 'json']),
+  );
+  if (code !== 0) {
+    console.error(`[xsearch] ${tag} 失败:`, out.replace(/\s+/g, ' ').slice(-200));
+    return;
+  }
+  const cutoff = Date.now() - 7 * 24 * 3600 * 1000;
+  const items = parseJsonArray(out)
+    .map((t) => ({ ...t, photos: (t.media_urls || []).filter((u) => /pbs\.twimg\.com\/media\//.test(u)) }))
+    .filter((t) => t.photos.length && (!t.created_at || Date.parse(t.created_at) >= cutoff))
+    .map((t) => ({
+      id: String(t.id),
+      url: t.url,
+      author: t.author,
+      bio: t.bio || '',
+      text: t.text || '',
+      likes: Number(t.likes || 0),
+      media_urls: t.photos,
+      via: tag,
+    }));
+  if (!items.length) return;
+  const base = (CFG.workerUrl || '').replace(/\/+$/, '');
+  try {
+    const r = await fetch(base + '/api/discover/enqueue', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Authorization: `Bearer ${CFG.pubToken}` },
+      body: JSON.stringify({ items }),
+    });
+    const j = await r.json().catch(() => ({}));
+    console.log(`[xsearch] ${tag}: 搜到 ${items.length} 条,新进队列 ${j.added ?? '?'}`);
+  } catch (e) {
+    console.error('[xsearch] 够不到 Worker:', e.message);
+  }
+}
+
 if (CFG.workerUrl) {
+  if (DISCOVER_EVERY_MS > 0) setInterval(() => tickDiscover(), DISCOVER_EVERY_MS);
+  if (XS) {
+    setInterval(() => searchOneTag().catch((e) => console.error('[xsearch]', e.message)), (XS.everyMin ?? 30) * 60 * 1000);
+    console.log(`[xsearch] 标签搜索已启动,每 ${XS.everyMin ?? 30} 分钟一个标签`);
+  }
   setInterval(() => pollScheduled().catch(() => {}), SCHED_POLL_MS);
   console.log('[publisher] 定时轮询已启动，每 60s 检查一次');
 } else {

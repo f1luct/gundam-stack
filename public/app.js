@@ -226,6 +226,7 @@ function renderShell() {
           <input id="url" type="url" inputmode="url" placeholder="粘贴 X / Twitter 推文链接…" />
           <button class="btn-acquire" id="addBtn">抓取</button>
           <button class="btn-news" id="newsBtn" title="抓取 gundam-official.com 最新新闻，AI 生成中文快讯">官方新闻</button>
+          <button class="btn-news" id="discoverBtn" title="从关注作者和标签里找帖，AI 看图筛选后进草稿（平时发布机会自动跑）">自动找帖</button>
         </div>
         <nav class="states" id="tabs"></nav>
         <div class="srcbar" id="srcbar"></div>
@@ -270,6 +271,32 @@ function renderShell() {
 
   // 连续拉取：服务端每轮最多 3 篇（免费版子请求预算），
   // 前端自动一轮轮拉到官网第一页全部入库为止
+  // 手动推几步自动找帖（平时 N150 每 5 分钟推一步）。每步拉一个来源 + 看 2 条图，约 20s
+  const discoverBtn = document.getElementById('discoverBtn');
+  discoverBtn.addEventListener('click', async () => {
+    discoverBtn.disabled = true;
+    let carded = 0;
+    let dropped = 0;
+    try {
+      for (let step = 1; step <= 5; step++) {
+        discoverBtn.textContent = `找帖中 ${step}/5…`;
+        const r = await api('/api/discover/run', { method: 'POST' });
+        if (r.disabled) { toast('没配找帖来源（wrangler.toml 的 DISCOVER_*）', true); break; }
+        for (const p of r.processed || []) {
+          if (p.verdict === 'carded') carded++;
+          else if (p.verdict) dropped++;
+        }
+        if (carded) { state.tab = 'inbox'; await loadCards(); }
+      }
+      toast(`找帖完成：+${carded} 张草稿` + (dropped ? `，丢弃 ${dropped} 条` : ''));
+    } catch (err) {
+      if (err.message !== 'unauthorized') toast(err.message, true);
+    } finally {
+      discoverBtn.disabled = false;
+      discoverBtn.textContent = '自动找帖';
+    }
+  });
+
   const newsBtn = document.getElementById('newsBtn');
   newsBtn.addEventListener('click', async () => {
     newsBtn.disabled = true;
@@ -338,6 +365,10 @@ async function loadCards() {
   }
 }
 
+function cardMeta(card) {
+  try { return JSON.parse(card.meta_json || '{}') || {}; } catch { return {}; }
+}
+
 // 来源筛选条:全部 / X / 新闻;当前标签下按来源过滤,新闻筛选时提供一键清空草稿
 function renderSrcBar() {
   const el = document.getElementById('srcbar');
@@ -352,10 +383,13 @@ function renderSrcBar() {
         `<button class="chip ${state.src === f.key ? 'active' : ''}" data-src="${f.key}">${f.label}<b>${f.n}</b></button>`,
     )
     .join('');
+  const auto = state.cards.filter((c) => c.source_type === 'twitter' && cardMeta(c).auto).length;
   const clearBtn =
     state.tab === 'inbox' && state.src === 'news' && news
       ? '<button class="chip chip-danger" id="clearNews">✕ 清空新闻草稿</button>'
-      : '';
+      : state.tab === 'inbox' && state.src === 'x' && auto
+        ? '<button class="chip chip-danger" id="clearAuto">✕ 清空自动找帖草稿</button>'
+        : '';
   el.innerHTML = chips + clearBtn;
   el.querySelectorAll('[data-src]').forEach((b) =>
     b.addEventListener('click', () => {
@@ -379,6 +413,25 @@ function renderSrcBar() {
           if (!r.remaining) break;
         }
         toast(`已清空 ${removed} 条新闻草稿`);
+      } catch (err) {
+        if (err.message !== 'unauthorized') toast(err.message, true);
+      }
+      await loadCards();
+    });
+  const clrAuto = document.getElementById('clearAuto');
+  if (clrAuto)
+    clrAuto.addEventListener('click', async () => {
+      if (!confirm(`清空剩下的 ${auto} 张自动找帖草稿？\n手动抓的和待发的不动；清掉的帖子不会再被抓回来。`)) return;
+      clrAuto.disabled = true;
+      clrAuto.textContent = '清空中…';
+      try {
+        let removed = 0;
+        for (let i = 0; i < 40; i++) {
+          const r = await api('/api/discover/clear', { method: 'POST' });
+          removed += r.removed;
+          if (!r.remaining || !r.removed) break;
+        }
+        toast(`已清空 ${removed} 张自动草稿`);
       } catch (err) {
         if (err.message !== 'unauthorized') toast(err.message, true);
       }
@@ -458,6 +511,20 @@ function cardEl(card) {
     ? `<div class="unit-title">${esc(meta.title)}</div>`
     : '';
 
+  // 自动找帖的卡片：来源 + 看图红牌（AI / 国内画师只提示不拦，留给人判断）
+  const autoTags = meta.auto
+    ? `<span class="auto-tag">AUTO · ${esc(meta.via === 'list' ? '关注列表' : /^rt:/.test(meta.via || '') ? '@' + meta.via.slice(3) + ' 转发' : meta.via || '')}</span>` +
+      (meta.ai_suspect ? '<span class="flag">疑似AI</span>' : '') +
+      (meta.cn_artist_suspect ? '<span class="flag">疑似国内作者</span>' : '') +
+      (meta.not_original ? '<span class="flag">非原作者</span>' : '')
+    : '';
+  const flagReason = meta.auto && meta.reason && (meta.ai_suspect || meta.cn_artist_suspect || meta.not_original)
+    ? `<div class="unit-title flag-reason">${esc(meta.reason)}</div>`
+    : '';
+  // 简洁文案 ⇄ 附上原文（有中文译文用译文，否则用原文）
+  const shortHead = meta.subject || '';
+  const extraText = (meta.text_zh || card.text_original || '').trim();
+
   const shots = (card.images || [])
     .map(
       (im) => `
@@ -486,12 +553,14 @@ function cardEl(card) {
     <header class="unit-head">
       <span class="tag">${esc(srcBadge)}</span>
       ${handle}
+      ${autoTags}
       <span class="flex"></span>
       ${schedBadge}
       <span class="unit-code">${esc(code)}</span>
       <span class="unit-time">${fmtTime(card.created_at)}</span>
     </header>
     ${newsTitle}
+    ${flagReason}
     ${shots ? `<div class="visual"><div class="shots">${shots}</div></div>` : ''}
     <div class="body">
       <div class="body-label">CAPTION · 配文</div>
@@ -499,6 +568,7 @@ function cardEl(card) {
       <div class="tools">
         <button class="btn-copy" data-act="copytext">复制文案</button>
         <button class="btn-ghost" data-act="translate">翻译</button>
+        ${meta.auto && extraText ? '<button class="btn-ghost" data-act="withtext">附原文</button>' : ''}
         <select data-style>
           <option value="意译">意译 PARAPHRASE</option>
           <option value="直译">直译 LITERAL</option>
@@ -540,6 +610,21 @@ function cardEl(card) {
       try { downloadBlob(await pngFrom(b.dataset.dlimg), 'image.png'); }
       catch (e) { toast('失败：' + e.message, true); }
     }));
+
+  const withBtn = root.querySelector('[data-act="withtext"]');
+  if (withBtn) {
+    const sync = () => (withBtn.textContent = ta.value.includes(extraText) ? '去掉原文' : '附原文');
+    sync();
+    ta.addEventListener('input', sync);
+    withBtn.addEventListener('click', () => {
+      const body = ta.value.includes(extraText) ? shortHead : [shortHead, extraText].filter(Boolean).join('\n\n');
+      ta.value = composeCaption(body, card.author_handle);
+      autosize(ta);
+      dirty = true;
+      sync();
+      save();
+    });
+  }
 
   root.querySelector('[data-act="copytext"]').addEventListener('click', () => copyText(ta.value));
   root.querySelector('[data-act="translate"]').addEventListener('click', async (e) => {

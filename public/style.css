@@ -586,6 +586,26 @@ select {
 .unit[data-status] .tag { background: var(--steel); }
 .unit[data-src="news"] .tag { background: var(--yellow); }
 
+/* 自动找帖：来源小字 + 看图红牌 */
+.auto-tag {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--steel);
+  white-space: nowrap;
+}
+.flag {
+  padding: 1px 6px;
+  font-size: 10px;
+  color: #fff;
+  background: var(--red);
+  white-space: nowrap;
+}
+.flag-reason {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--red);
+}
+
 /* 新闻卡片的日文原标题 */
 .unit-title {
   padding: 10px 16px 0;
