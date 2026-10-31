@@ -85,3 +85,21 @@ CREATE TABLE IF NOT EXISTS x_authors (
   picks    INTEGER NOT NULL DEFAULT 1,
   added_at INTEGER NOT NULL
 );
+
+-- @高达Bit 的微博数据：N150 定期用 opencli 拉最近的微博推上来（赞/转/评每次刷新）。
+-- kind/card_meta 是对上站里卡片时的快照（卡片 7 天后会清掉，快照长期保留）
+CREATE TABLE IF NOT EXISTS weibo_posts (
+  id         TEXT PRIMARY KEY,             -- 微博 id
+  mblogid    TEXT,
+  text       TEXT,
+  posted_at  INTEGER NOT NULL,
+  likes      INTEGER NOT NULL DEFAULT 0,
+  reposts    INTEGER NOT NULL DEFAULT 0,
+  comments   INTEGER NOT NULL DEFAULT 0,
+  pic_count  INTEGER NOT NULL DEFAULT 0,
+  url        TEXT,
+  kind       TEXT,                         -- auto | manual | news | other；NULL = 还没判定
+  card_meta  TEXT,                         -- {card_id, author, subject, via, x_likes}
+  fetched_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_weibo_posted ON weibo_posts(posted_at);

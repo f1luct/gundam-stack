@@ -363,7 +363,50 @@ async function searchOneTag() {
   }
 }
 
+/* ---------- 微博数据:每 statsEveryHours 小时拉一次 @高达Bit 最近 40 条的赞/转/评,推给 Worker 做数据页 ---------- */
+
+async function syncWeiboStats() {
+  if (!CFG.weiboUid || !OPENCLI_JS) return;
+  const { code, out } = await enqueue(() =>
+    runOpencliRetry(['weibo', 'user-posts', String(CFG.weiboUid), '--limit', '40', '-f', 'json']),
+  );
+  if (code !== 0) {
+    console.error('[stats] 拉微博失败:', out.replace(/\s+/g, ' ').slice(-200));
+    return;
+  }
+  const posts = parseJsonArray(out).map((p) => ({
+    id: String(p.id),
+    mblogid: p.mblogid,
+    text: p.text,
+    time: p.time,
+    reposts: p.reposts,
+    comments: p.comments,
+    likes: p.likes,
+    pic_count: p.pic_count,
+    url: p.url,
+  }));
+  if (!posts.length) return;
+  const base = (CFG.workerUrl || '').replace(/\/+$/, '');
+  try {
+    const r = await fetch(base + '/api/stats/weibo', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Authorization: `Bearer ${CFG.pubToken}` },
+      body: JSON.stringify({ posts }),
+    });
+    const j = await r.json().catch(() => ({}));
+    console.log(`[stats] 微博 ${posts.length} 条已同步,新对上卡片 ${j.matched ?? '?'}`);
+  } catch (e) {
+    console.error('[stats] 够不到 Worker:', e.message);
+  }
+}
+
 if (CFG.workerUrl) {
+  if (CFG.weiboUid && (CFG.statsEveryHours ?? 6) > 0) {
+    const run = () => syncWeiboStats().catch((e) => console.error('[stats]', e.message));
+    setTimeout(run, 2 * 60 * 1000); // 启动 2 分钟后先拉一次
+    setInterval(run, (CFG.statsEveryHours ?? 6) * 3600 * 1000);
+    console.log(`[stats] 微博数据同步已启动,每 ${CFG.statsEveryHours ?? 6} 小时一次`);
+  }
   if (DISCOVER_EVERY_MS > 0) setInterval(() => tickDiscover(), DISCOVER_EVERY_MS);
   if (XS) {
     setInterval(() => searchOneTag().catch((e) => console.error('[xsearch]', e.message)), (XS.everyMin ?? 30) * 60 * 1000);

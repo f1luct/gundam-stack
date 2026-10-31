@@ -6,6 +6,7 @@ import { ingestTweet } from './ingest';
 import { pullNews } from './news';
 import { translate } from './translate';
 import { discoverTick, enqueueCandidates, recordChoice, type Candidate } from './discover';
+import { ingestWeiboPosts, refreshInsight, statsSummary, type WeiboPost } from './stats';
 import { attachImages, getCardWithImages, composeCaption, deleteCard } from './db';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -108,6 +109,15 @@ app.post('/api/discover/enqueue', async (c) => {
   return c.json({ added: await enqueueCandidates(c.env, items) });
 });
 
+// N150 定期推 @高达Bit 最近的微博数据；顺手每天刷新一次 AI 挑帖建议
+app.post('/api/stats/weibo', async (c) => {
+  if (!pubTokenOk(c)) return c.json({ error: '未授权' }, 401);
+  const b = await c.req.json<{ posts?: WeiboPost[] }>().catch(() => ({}) as { posts?: WeiboPost[] });
+  const res = await ingestWeiboPosts(c.env, (b.posts || []).slice(0, 100));
+  c.executionCtx.waitUntil(refreshInsight(c.env).catch(() => {}));
+  return c.json(res);
+});
+
 /* ---------- 以下全部需要登录 ---------- */
 
 app.use('/api/*', authMiddleware());
@@ -124,6 +134,10 @@ app.get('/api/counts', async (c) => {
   }
   return c.json({ counts });
 });
+
+// 数据页：昨天的微博数据 + 近 30 天汇总 + AI 挑帖建议
+app.get('/api/stats', async (c) => c.json(await statsSummary(c.env)));
+app.post('/api/stats/insight', async (c) => c.json({ insight: await refreshInsight(c.env, true) }));
 
 // 核心入口：贴链接入库
 app.post('/api/cards/ingest', async (c) => {

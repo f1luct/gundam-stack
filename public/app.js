@@ -193,6 +193,7 @@ const TABS = [
   { key: 'inbox', cn: '草稿', en: 'DRAFT' },
   { key: 'queued', cn: '待发', en: 'QUEUED' },
   { key: 'posted', cn: '已发', en: 'POSTED' },
+  { key: 'stats', cn: '数据', en: 'STATS' },
 ];
 
 const STATUS_TOAST = {
@@ -338,7 +339,7 @@ function renderTabs() {
   const el = document.getElementById('tabs');
   el.innerHTML = TABS.map((t) => {
     const active = t.key === state.tab;
-    const cnt = state.counts[t.key] ?? 0;
+    const cnt = t.key === 'stats' ? (state.stats ? state.stats.yesterday.totals.posts : '·') : state.counts[t.key] ?? 0;
     return `<button class="state ${active ? 'active' : ''}" data-tab="${t.key}">
         <span class="state-cn">${t.cn}</span>
         <span class="state-en">${t.en}</span>
@@ -350,6 +351,7 @@ function renderTabs() {
 }
 
 async function loadCards() {
+  if (state.tab === 'stats') return loadStats();
   try {
     const [list, count] = await Promise.all([
       api('/api/cards?status=' + encodeURIComponent(state.tab)),
@@ -363,6 +365,111 @@ async function loadCards() {
   } catch (err) {
     if (err.message !== 'unauthorized') toast(err.message, true);
   }
+}
+
+/* ---------- 数据页：昨天的微博数据 + 近 30 天 + AI 挑帖建议 ---------- */
+
+const KIND = { auto: '自动找帖', manual: '手动贴链接', news: '官网新闻', other: '自己写/站外' };
+
+async function loadStats() {
+  try {
+    const [st, count] = await Promise.all([api('/api/stats'), api('/api/counts')]);
+    state.stats = st;
+    state.counts = count.counts;
+    renderTabs();
+    document.getElementById('srcbar').innerHTML = '';
+    renderStats();
+  } catch (err) {
+    if (err.message !== 'unauthorized') toast(err.message, true);
+  }
+}
+
+function delta(now, before) {
+  if (!before) return '';
+  const d = now - before;
+  if (!d) return '<span class="st-flat">持平</span>';
+  return `<span class="${d > 0 ? 'st-up' : 'st-down'}">${d > 0 ? '▲' : '▼'}${Math.abs(d)}</span>`;
+}
+
+function postRow(p) {
+  const who = [p.subject && esc(p.subject), p.author && `<span class="st-dim">@${esc(p.author)}</span>`]
+    .filter(Boolean)
+    .join(' ');
+  const text = esc(String(p.text || '').replace(/\s+/g, ' ').slice(0, 70));
+  return `<a class="st-post" href="${esc(p.url || '#')}" target="_blank" rel="noopener">
+      <span class="st-nums"><b>${p.likes}</b>赞 ${p.reposts}转 ${p.comments}评</span>
+      <span class="st-kind" data-kind="${esc(p.kind || 'other')}">${KIND[p.kind] || '未判定'}</span>
+      <span class="st-what">${who || text}</span>
+      ${who ? `<span class="st-text">${text}</span>` : ''}
+      <span class="st-time">${fmtTime(p.posted_at)}</span>
+    </a>`;
+}
+
+function renderStats() {
+  const box = document.getElementById('cards');
+  const st = state.stats;
+  if (!st || !st.fetched_at) {
+    box.innerHTML = '<div class="empty"><b>还没有微博数据</b>N150 每 6 小时同步一次，第一次同步后这里就有了</div>';
+    return;
+  }
+  const y = st.yesterday.totals;
+  const b = st.day_before;
+  const ins = st.insight;
+  const list = (arr) => (arr || []).map((x) => `<li>${esc(x)}</li>`).join('');
+  const kinds = Object.entries(st.last30.by_kind)
+    .map(
+      ([k, t]) => `<tr><td>${KIND[k] || k}</td><td>${t.posts}</td><td>${t.posts ? Math.round(t.likes / t.posts) : 0}</td>
+        <td>${t.median_likes}</td><td>${t.posts ? Math.round(t.reposts / t.posts) : 0}</td></tr>`,
+    )
+    .join('');
+  const ys = [...st.yesterday.posts].sort((a, b2) => b2.likes - a.likes);
+  box.innerHTML = `
+    <section class="st-panel">
+      <div class="st-head"><span class="st-label">YESTERDAY · ${esc(st.date)}</span>
+        <span class="st-dim">数据更新于 ${fmtTime(st.fetched_at)}，赞数还会涨</span></div>
+      <div class="st-big">
+        <div><b>${y.posts}</b><span>条微博 ${delta(y.posts, b.posts)}</span></div>
+        <div><b>${y.likes}</b><span>赞 ${delta(y.likes, b.likes)}</span></div>
+        <div><b>${y.reposts}</b><span>转发 ${delta(y.reposts, b.reposts)}</span></div>
+        <div><b>${y.comments}</b><span>评论 ${delta(y.comments, b.comments)}</span></div>
+        <div><b>${y.median_likes}</b><span>中位赞</span></div>
+      </div>
+      <div class="st-list">${ys.map(postRow).join('') || '<div class="st-dim">昨天没发微博</div>'}</div>
+    </section>
+    <section class="st-panel">
+      <div class="st-head"><span class="st-label">AI 挑帖建议</span>
+        <span class="st-dim">${ins ? `${esc(ins.date)} · 基于 ${ins.sample} 条` : '还没生成'}</span>
+        <button class="chip" id="reInsight">重新分析</button></div>
+      ${
+        ins
+          ? `<p class="st-headline">${esc(ins.headline)}</p>
+        <div class="st-cols">
+          <div><h4>发现</h4><ul>${list(ins.findings)}</ul></div>
+          <div><h4>多挑</h4><ul class="st-good">${list(ins.pick_more)}</ul>
+               <h4>少发</h4><ul class="st-bad">${list(ins.avoid)}</ul></div>
+        </div>`
+          : ''
+      }
+    </section>
+    <section class="st-panel">
+      <div class="st-head"><span class="st-label">近 30 天</span>
+        <span class="st-dim">${st.last30.totals.posts} 条 · 中位 ${st.last30.totals.median_likes} 赞</span></div>
+      <table class="st-table"><tr><th>类型</th><th>条数</th><th>平均赞</th><th>中位赞</th><th>平均转</th></tr>${kinds}</table>
+      <h4>最高赞 10 条</h4>
+      <div class="st-list">${st.last30.top.map(postRow).join('')}</div>
+    </section>`;
+  document.getElementById('reInsight').addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    e.target.textContent = '分析中…';
+    try {
+      await api('/api/stats/insight', { method: 'POST' });
+      await loadStats();
+    } catch (err) {
+      if (err.message !== 'unauthorized') toast(err.message, true);
+      e.target.disabled = false;
+      e.target.textContent = '重新分析';
+    }
+  });
 }
 
 function cardMeta(card) {

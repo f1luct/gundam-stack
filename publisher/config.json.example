@@ -5,6 +5,7 @@
   "weiboUid": "<微博数字uid>",
   "workerUrl": "https://gundam.fluct.dev",
   "discoverEveryMin": 5,
+  "statsEveryHours": 6,
   "xSearch": {
     "tags": [
       "ガンダム OR ハサウェイ OR ジークアクス OR シャア OR ザク",
