@@ -113,9 +113,19 @@ app.post('/api/discover/enqueue', async (c) => {
 app.post('/api/stats/weibo', async (c) => {
   if (!pubTokenOk(c)) return c.json({ error: '未授权' }, 401);
   const b = await c.req.json<{ posts?: WeiboPost[] }>().catch(() => ({}) as { posts?: WeiboPost[] });
-  const res = await ingestWeiboPosts(c.env, (b.posts || []).slice(0, 100));
-  c.executionCtx.waitUntil(refreshInsight(c.env).catch(() => {}));
-  return c.json(res);
+  return c.json(await ingestWeiboPosts(c.env, (b.posts || []).slice(0, 100)));
+});
+
+// 同步完 N150 再来敲一下：每天刷新一次 AI 挑帖建议。开思考的 DeepSeek 要几十秒，
+// 放 waitUntil 里会超出响应后的后台时限被掐掉，所以单独一个请求同步等它
+app.post('/api/stats/insight/tick', async (c) => {
+  if (!pubTokenOk(c)) return c.json({ error: '未授权' }, 401);
+  try {
+    const insight = await refreshInsight(c.env);
+    return c.json({ date: insight?.date ?? null, headline: insight?.headline ?? null });
+  } catch (e: any) {
+    return c.json({ error: String(e?.message || e) }, 500);
+  }
 });
 
 /* ---------- 以下全部需要登录 ---------- */
@@ -137,7 +147,13 @@ app.get('/api/counts', async (c) => {
 
 // 数据页：昨天的微博数据 + 近 30 天汇总 + AI 挑帖建议
 app.get('/api/stats', async (c) => c.json(await statsSummary(c.env)));
-app.post('/api/stats/insight', async (c) => c.json({ insight: await refreshInsight(c.env, true) }));
+app.post('/api/stats/insight', async (c) => {
+  try {
+    return c.json({ insight: await refreshInsight(c.env, true) });
+  } catch (e: any) {
+    return c.json({ error: String(e?.message || e) }, 502);
+  }
+});
 
 // 核心入口：贴链接入库
 app.post('/api/cards/ingest', async (c) => {

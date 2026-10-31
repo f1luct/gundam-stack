@@ -206,13 +206,13 @@ export async function refreshInsight(env: Env, force = false): Promise<any> {
       stream: false,
     }),
   });
-  if (!r.ok) return old;
+  if (!r.ok) throw new Error(`DeepSeek 出错 (${r.status}): ${(await r.text().catch(() => '')).slice(0, 200)}`);
   const j: any = await r.json();
   let out: any;
   try {
     out = JSON.parse(j?.choices?.[0]?.message?.content || '{}');
   } catch {
-    return old;
+    throw new Error('DeepSeek 返回的不是合法 JSON');
   }
   const arr = (v: any) => (Array.isArray(v) ? v.map(String).filter(Boolean) : []);
   const insight = {

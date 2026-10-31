@@ -395,6 +395,14 @@ async function syncWeiboStats() {
     });
     const j = await r.json().catch(() => ({}));
     console.log(`[stats] 微博 ${posts.length} 条已同步,新对上卡片 ${j.matched ?? '?'}`);
+    // 每天一次的 AI 挑帖建议(Worker 自己判断今天做过没有),DeepSeek 要几十秒
+    const r2 = await fetch(base + '/api/stats/insight/tick', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${CFG.pubToken}` },
+    });
+    const k = await r2.json().catch(() => ({}));
+    if (k.error) console.error('[stats] 生成分析失败:', k.error);
+    else if (k.headline) console.log(`[stats] 分析(${k.date}): ${k.headline}`);
   } catch (e) {
     console.error('[stats] 够不到 Worker:', e.message);
   }
