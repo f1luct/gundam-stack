@@ -193,6 +193,7 @@ const TABS = [
   { key: 'inbox', cn: '草稿', en: 'DRAFT' },
   { key: 'queued', cn: '待发', en: 'QUEUED' },
   { key: 'posted', cn: '已发', en: 'POSTED' },
+  { key: 'stats', cn: '数据', en: 'STATS' },
 ];
 
 const STATUS_TOAST = {
@@ -226,6 +227,7 @@ function renderShell() {
           <input id="url" type="url" inputmode="url" placeholder="粘贴 X / Twitter 推文链接…" />
           <button class="btn-acquire" id="addBtn">抓取</button>
           <button class="btn-news" id="newsBtn" title="抓取 gundam-official.com 最新新闻，AI 生成中文快讯">官方新闻</button>
+          <button class="btn-news" id="discoverBtn" title="从关注作者和标签里找帖，AI 看图筛选后进草稿（平时发布机会自动跑）">自动找帖</button>
         </div>
         <nav class="states" id="tabs"></nav>
         <div class="srcbar" id="srcbar"></div>
@@ -270,6 +272,32 @@ function renderShell() {
 
   // 连续拉取：服务端每轮最多 3 篇（免费版子请求预算），
   // 前端自动一轮轮拉到官网第一页全部入库为止
+  // 手动推几步自动找帖（平时 N150 每 5 分钟推一步）。每步拉一个来源 + 看 2 条图，约 20s
+  const discoverBtn = document.getElementById('discoverBtn');
+  discoverBtn.addEventListener('click', async () => {
+    discoverBtn.disabled = true;
+    let carded = 0;
+    let dropped = 0;
+    try {
+      for (let step = 1; step <= 5; step++) {
+        discoverBtn.textContent = `找帖中 ${step}/5…`;
+        const r = await api('/api/discover/run', { method: 'POST' });
+        if (r.disabled) { toast('没配找帖来源（wrangler.toml 的 DISCOVER_*）', true); break; }
+        for (const p of r.processed || []) {
+          if (p.verdict === 'carded') carded++;
+          else if (p.verdict) dropped++;
+        }
+        if (carded) { state.tab = 'inbox'; await loadCards(); }
+      }
+      toast(`找帖完成：+${carded} 张草稿` + (dropped ? `，丢弃 ${dropped} 条` : ''));
+    } catch (err) {
+      if (err.message !== 'unauthorized') toast(err.message, true);
+    } finally {
+      discoverBtn.disabled = false;
+      discoverBtn.textContent = '自动找帖';
+    }
+  });
+
   const newsBtn = document.getElementById('newsBtn');
   newsBtn.addEventListener('click', async () => {
     newsBtn.disabled = true;
@@ -311,7 +339,7 @@ function renderTabs() {
   const el = document.getElementById('tabs');
   el.innerHTML = TABS.map((t) => {
     const active = t.key === state.tab;
-    const cnt = state.counts[t.key] ?? 0;
+    const cnt = t.key === 'stats' ? (state.stats ? state.stats.yesterday.totals.posts : '·') : state.counts[t.key] ?? 0;
     return `<button class="state ${active ? 'active' : ''}" data-tab="${t.key}">
         <span class="state-cn">${t.cn}</span>
         <span class="state-en">${t.en}</span>
@@ -323,6 +351,7 @@ function renderTabs() {
 }
 
 async function loadCards() {
+  if (state.tab === 'stats') return loadStats();
   try {
     const [list, count] = await Promise.all([
       api('/api/cards?status=' + encodeURIComponent(state.tab)),
@@ -336,6 +365,115 @@ async function loadCards() {
   } catch (err) {
     if (err.message !== 'unauthorized') toast(err.message, true);
   }
+}
+
+/* ---------- 数据页：昨天的微博数据 + 近 30 天 + AI 挑帖建议 ---------- */
+
+const KIND = { auto: '自动找帖', manual: '手动贴链接', news: '官网新闻', other: '自己写/站外' };
+
+async function loadStats() {
+  try {
+    const [st, count] = await Promise.all([api('/api/stats'), api('/api/counts')]);
+    state.stats = st;
+    state.counts = count.counts;
+    renderTabs();
+    document.getElementById('srcbar').innerHTML = '';
+    renderStats();
+  } catch (err) {
+    if (err.message !== 'unauthorized') toast(err.message, true);
+  }
+}
+
+function delta(now, before) {
+  if (!before) return '';
+  const d = now - before;
+  if (!d) return '<span class="st-flat">持平</span>';
+  return `<span class="${d > 0 ? 'st-up' : 'st-down'}">${d > 0 ? '▲' : '▼'}${Math.abs(d)}</span>`;
+}
+
+function postRow(p) {
+  const who = [p.subject && esc(p.subject), p.author && `<span class="st-dim">@${esc(p.author)}</span>`]
+    .filter(Boolean)
+    .join(' ');
+  const text = esc(String(p.text || '').replace(/\s+/g, ' ').slice(0, 70));
+  return `<a class="st-post" href="${esc(p.url || '#')}" target="_blank" rel="noopener">
+      <span class="st-nums"><b>${p.likes}</b>赞 ${p.reposts}转 ${p.comments}评</span>
+      <span class="st-kind" data-kind="${esc(p.kind || 'other')}">${KIND[p.kind] || '未判定'}</span>
+      <span class="st-what">${who || text}</span>
+      ${who ? `<span class="st-text">${text}</span>` : ''}
+      <span class="st-time">${fmtTime(p.posted_at)}</span>
+    </a>`;
+}
+
+function renderStats() {
+  const box = document.getElementById('cards');
+  const st = state.stats;
+  if (!st || !st.fetched_at) {
+    box.innerHTML = '<div class="empty"><b>还没有微博数据</b>N150 每 6 小时同步一次，第一次同步后这里就有了</div>';
+    return;
+  }
+  const y = st.yesterday.totals;
+  const b = st.day_before;
+  const ins = st.insight;
+  const list = (arr) => (arr || []).map((x) => `<li>${esc(x)}</li>`).join('');
+  const kinds = Object.entries(st.last30.by_kind)
+    .map(
+      ([k, t]) => `<tr><td>${KIND[k] || k}</td><td>${t.posts}</td><td>${t.posts ? Math.round(t.likes / t.posts) : 0}</td>
+        <td>${t.median_likes}</td><td>${t.posts ? Math.round(t.reposts / t.posts) : 0}</td></tr>`,
+    )
+    .join('');
+  const ys = [...st.yesterday.posts].sort((a, b2) => b2.likes - a.likes);
+  box.innerHTML = `
+    <section class="st-panel">
+      <div class="st-head"><span class="st-label">YESTERDAY · ${esc(st.date)}</span>
+        <span class="st-dim">数据更新于 ${fmtTime(st.fetched_at)}，赞数还会涨</span></div>
+      <div class="st-big">
+        <div><b>${y.posts}</b><span>条微博 ${delta(y.posts, b.posts)}</span></div>
+        <div><b>${y.likes}</b><span>赞 ${delta(y.likes, b.likes)}</span></div>
+        <div><b>${y.reposts}</b><span>转发 ${delta(y.reposts, b.reposts)}</span></div>
+        <div><b>${y.comments}</b><span>评论 ${delta(y.comments, b.comments)}</span></div>
+        <div><b>${y.median_likes}</b><span>中位赞</span></div>
+      </div>
+      <div class="st-list">${ys.map(postRow).join('') || '<div class="st-dim">昨天没发微博</div>'}</div>
+    </section>
+    <section class="st-panel">
+      <div class="st-head"><span class="st-label">AI 挑帖建议</span>
+        <span class="st-dim">${ins ? `${esc(ins.date)} · 基于 ${ins.sample} 条` : '还没生成'}</span>
+        <button class="chip" id="reInsight">重新分析</button></div>
+      ${
+        ins
+          ? `<p class="st-headline">${esc(ins.headline)}</p>
+        <div class="st-cols">
+          <div><h4>发现</h4><ul>${list(ins.findings)}</ul></div>
+          <div><h4>多挑</h4><ul class="st-good">${list(ins.pick_more)}</ul>
+               <h4>少发</h4><ul class="st-bad">${list(ins.avoid)}</ul></div>
+        </div>`
+          : ''
+      }
+    </section>
+    <section class="st-panel">
+      <div class="st-head"><span class="st-label">近 30 天</span>
+        <span class="st-dim">${st.last30.totals.posts} 条 · 中位 ${st.last30.totals.median_likes} 赞</span></div>
+      <table class="st-table"><tr><th>类型</th><th>条数</th><th>平均赞</th><th>中位赞</th><th>平均转</th></tr>${kinds}</table>
+      <h4>最高赞 10 条</h4>
+      <div class="st-list">${st.last30.top.map(postRow).join('')}</div>
+    </section>`;
+  document.getElementById('reInsight').addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    e.target.textContent = '分析中…';
+    try {
+      await api('/api/stats/insight', { method: 'POST' });
+      await loadStats();
+    } catch (err) {
+      if (err.message !== 'unauthorized') toast(err.message, true);
+      e.target.disabled = false;
+      e.target.textContent = '重新分析';
+    }
+  });
+}
+
+function cardMeta(card) {
+  try { return JSON.parse(card.meta_json || '{}') || {}; } catch { return {}; }
 }
 
 // 来源筛选条:全部 / X / 新闻;当前标签下按来源过滤,新闻筛选时提供一键清空草稿
@@ -352,10 +490,13 @@ function renderSrcBar() {
         `<button class="chip ${state.src === f.key ? 'active' : ''}" data-src="${f.key}">${f.label}<b>${f.n}</b></button>`,
     )
     .join('');
+  const auto = state.cards.filter((c) => c.source_type === 'twitter' && cardMeta(c).auto).length;
   const clearBtn =
     state.tab === 'inbox' && state.src === 'news' && news
       ? '<button class="chip chip-danger" id="clearNews">✕ 清空新闻草稿</button>'
-      : '';
+      : state.tab === 'inbox' && state.src === 'x' && auto
+        ? '<button class="chip chip-danger" id="clearAuto">✕ 清空自动找帖草稿</button>'
+        : '';
   el.innerHTML = chips + clearBtn;
   el.querySelectorAll('[data-src]').forEach((b) =>
     b.addEventListener('click', () => {
@@ -379,6 +520,25 @@ function renderSrcBar() {
           if (!r.remaining) break;
         }
         toast(`已清空 ${removed} 条新闻草稿`);
+      } catch (err) {
+        if (err.message !== 'unauthorized') toast(err.message, true);
+      }
+      await loadCards();
+    });
+  const clrAuto = document.getElementById('clearAuto');
+  if (clrAuto)
+    clrAuto.addEventListener('click', async () => {
+      if (!confirm(`清空剩下的 ${auto} 张自动找帖草稿？\n手动抓的和待发的不动；清掉的帖子不会再被抓回来。`)) return;
+      clrAuto.disabled = true;
+      clrAuto.textContent = '清空中…';
+      try {
+        let removed = 0;
+        for (let i = 0; i < 40; i++) {
+          const r = await api('/api/discover/clear', { method: 'POST' });
+          removed += r.removed;
+          if (!r.remaining || !r.removed) break;
+        }
+        toast(`已清空 ${removed} 张自动草稿`);
       } catch (err) {
         if (err.message !== 'unauthorized') toast(err.message, true);
       }
@@ -458,6 +618,20 @@ function cardEl(card) {
     ? `<div class="unit-title">${esc(meta.title)}</div>`
     : '';
 
+  // 自动找帖的卡片：来源 + 看图红牌（AI / 国内画师只提示不拦，留给人判断）
+  const autoTags = meta.auto
+    ? `<span class="auto-tag">AUTO · ${esc(meta.via === 'list' ? '关注列表' : /^rt:/.test(meta.via || '') ? '@' + meta.via.slice(3) + ' 转发' : meta.via || '')}</span>` +
+      (meta.ai_suspect ? '<span class="flag">疑似AI</span>' : '') +
+      (meta.cn_artist_suspect ? '<span class="flag">疑似国内作者</span>' : '') +
+      (meta.not_original ? '<span class="flag">非原作者</span>' : '')
+    : '';
+  const flagReason = meta.auto && meta.reason && (meta.ai_suspect || meta.cn_artist_suspect || meta.not_original)
+    ? `<div class="unit-title flag-reason">${esc(meta.reason)}</div>`
+    : '';
+  // 简洁文案 ⇄ 附上原文（有中文译文用译文，否则用原文）
+  const shortHead = meta.subject || '';
+  const extraText = (meta.text_zh || card.text_original || '').trim();
+
   const shots = (card.images || [])
     .map(
       (im) => `
@@ -486,12 +660,14 @@ function cardEl(card) {
     <header class="unit-head">
       <span class="tag">${esc(srcBadge)}</span>
       ${handle}
+      ${autoTags}
       <span class="flex"></span>
       ${schedBadge}
       <span class="unit-code">${esc(code)}</span>
       <span class="unit-time">${fmtTime(card.created_at)}</span>
     </header>
     ${newsTitle}
+    ${flagReason}
     ${shots ? `<div class="visual"><div class="shots">${shots}</div></div>` : ''}
     <div class="body">
       <div class="body-label">CAPTION · 配文</div>
@@ -499,6 +675,7 @@ function cardEl(card) {
       <div class="tools">
         <button class="btn-copy" data-act="copytext">复制文案</button>
         <button class="btn-ghost" data-act="translate">翻译</button>
+        ${meta.auto && extraText ? '<button class="btn-ghost" data-act="withtext">附原文</button>' : ''}
         <select data-style>
           <option value="意译">意译 PARAPHRASE</option>
           <option value="直译">直译 LITERAL</option>
@@ -540,6 +717,21 @@ function cardEl(card) {
       try { downloadBlob(await pngFrom(b.dataset.dlimg), 'image.png'); }
       catch (e) { toast('失败：' + e.message, true); }
     }));
+
+  const withBtn = root.querySelector('[data-act="withtext"]');
+  if (withBtn) {
+    const sync = () => (withBtn.textContent = ta.value.includes(extraText) ? '去掉原文' : '附原文');
+    sync();
+    ta.addEventListener('input', sync);
+    withBtn.addEventListener('click', () => {
+      const body = ta.value.includes(extraText) ? shortHead : [shortHead, extraText].filter(Boolean).join('\n\n');
+      ta.value = composeCaption(body, card.author_handle);
+      autosize(ta);
+      dirty = true;
+      sync();
+      save();
+    });
+  }
 
   root.querySelector('[data-act="copytext"]').addEventListener('click', () => copyText(ta.value));
   root.querySelector('[data-act="translate"]').addEventListener('click', async (e) => {
