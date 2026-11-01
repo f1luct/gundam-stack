@@ -160,7 +160,7 @@ export async function statsSummary(env: Env) {
 export async function refreshInsight(env: Env, force = false): Promise<any> {
   const today = bjDate(Date.now());
   const old = JSON.parse((await env.IMAGES.get(INSIGHT_KEY)) || 'null');
-  if (!force && old?.date === today) return old;
+  if (!force && old?.date === today && old?.headline) return old;
   if (!env.DEEPSEEK_API_KEY) return old;
   const since = bjDayStart(-30);
   const posts = ((await env.DB.prepare('SELECT * FROM weibo_posts WHERE posted_at >= ? ORDER BY posted_at').bind(since).all())
@@ -202,17 +202,20 @@ export async function refreshInsight(env: Env, force = false): Promise<any> {
       ],
       response_format: { type: 'json_object' },
       thinking: { type: 'enabled' },
-      max_tokens: 4000,
+      max_tokens: 16000, // 思考会吃掉不少 token，4000 时正文常被截成空
       stream: false,
     }),
   });
   if (!r.ok) throw new Error(`DeepSeek 出错 (${r.status}): ${(await r.text().catch(() => '')).slice(0, 200)}`);
   const j: any = await r.json();
+  const choice = j?.choices?.[0];
+  const content = String(choice?.message?.content || '').trim();
+  if (!content) throw new Error(`DeepSeek 没给正文 (finish_reason=${choice?.finish_reason ?? '?'})`);
   let out: any;
   try {
-    out = JSON.parse(j?.choices?.[0]?.message?.content || '{}');
+    out = JSON.parse(content.replace(/^```(?:json)?\s*|\s*```$/g, ''));
   } catch {
-    throw new Error('DeepSeek 返回的不是合法 JSON');
+    throw new Error(`DeepSeek 返回的不是合法 JSON: ${content.slice(0, 120)}`);
   }
   const arr = (v: any) => (Array.isArray(v) ? v.map(String).filter(Boolean) : []);
   const insight = {
@@ -223,6 +226,10 @@ export async function refreshInsight(env: Env, force = false): Promise<any> {
     pick_more: arr(out.pick_more),
     avoid: arr(out.avoid),
   };
+  // 空结果不存，免得占住今天的名额、明天之前都不重跑
+  if (!insight.headline && !insight.findings.length) {
+    throw new Error(`DeepSeek 返回的字段不对: ${content.slice(0, 120)}`);
+  }
   await env.IMAGES.put(INSIGHT_KEY, JSON.stringify(insight));
   return insight;
 }
